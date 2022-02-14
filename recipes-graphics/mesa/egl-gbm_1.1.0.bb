@@ -10,7 +10,10 @@ SRC_URI = "git://${SRC_REPO};branch=${SRCBRANCH}"
 # 1.1.0 tag
 SRCREV = "39932b2cc4f44cdadd553cc931f3bebd4e348d10"
 
-SRC_URI += "file://0001-Tegra-workarounds.patch"
+SRC_URI += "\
+    file://0001-Tegra-workarounds.patch \
+    file://nvidia_gbm.json \
+"
 
 REQUIRED_DISTRO_FEATURES = "opengl"
 
@@ -19,9 +22,9 @@ S = "${WORKDIR}/git"
 inherit meson pkgconfig features_check
 
 do_install:append() {
-    install -d ${D}${libdir}/gbm
-    ln -sf ../libnvidia-egl-gbm.so.1.1.0 ${D}${libdir}/gbm/libnvidia-egl_gbm.so
+    install -d ${D}${datadir}/egl/egl_external_platform.d
+    install -m 0644 ${WORKDIR}/nvidia_gbm.json ${D}${datadir}/egl/egl_external_platform.d/15_nvidia_gbm.json
 }
 
-FILES:${PN} += "${libdir}/gbm"
+FILES:${PN} += "${datadir}/egl"
 INSANE_SKIP:${PN} = "dev-so"
