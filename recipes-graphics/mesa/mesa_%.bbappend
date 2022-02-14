@@ -12,11 +12,16 @@ do_install:append:tegra() {
     rm -rf ${D}${includedir}/EGL
 }
 
+pkg_postinst:libgbm:tegra() {
+    ln -sf libnvgbm.so $D${libdir}/libgbm.so.1
+}
+
 PACKAGE_ARCH:tegra = "${TEGRA_PKGARCH}"
 FILES:libegl-mesa:append:tegra = " ${libdir}/libEGL_mesa.so.* ${datadir}/glvnd"
 FILES:libegl-mesa-dev:append:tegra = " ${libdir}/libEGL_mesa.so"
 FILES:libgl-mesa:append:tegra = " ${libdir}/libGLX_mesa.so.*"
 FILES:libgl-mesa-dev:append:tegra = " ${libdir}/libGLX_mesa.so"
+RDEPENDS:libgbm:append:tegra = " tegra-libraries-gbm"
 
 python __anonymous() {
     if "tegra" not in d.getVar('OVERRIDES').split(':'):
