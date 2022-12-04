@@ -1,15 +1,18 @@
 #!/bin/bash
 bup_blob=0
+rcm_boot=0
 keyfile=
 sbk_keyfile=
 user_keyfile=
 spi_only=
+external_device=
 sdcard=
 no_flash=0
 flash_cmd=
 imgfile=
 dataimg=
 inst_args=""
+extdevargs=
 blocksize=4096
 
 # These functions are used in odmsign.func but do not
@@ -24,7 +27,7 @@ cp2local() {
     :
 }
 
-ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sdcard,spi-only,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
+ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sdcard,spi-only,external-device,rcm-boot,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error parsing options" >&2
     exit 1
@@ -49,6 +52,15 @@ while true; do
 	    ;;
 	--spi-only)
 	    spi_only=yes
+	    shift
+	    ;;
+	--rcm-boot)
+	    rcm_boot=1
+	    shift
+	    ;;
+	--external-device)
+	    external_device=yes
+	    extdevargs="--external_device"
 	    shift
 	    ;;
 	--datafile)
@@ -219,6 +231,16 @@ fi
 
 [ -f ${cvm_bin} ] && rm -f ${cvm_bin}
 
+rm -f boardvars.sh
+cat >boardvars.sh <<EOF
+BOARDID="$BOARDID"
+FAB="$FAB"
+BOARDSKU="$BOARDSKU"
+BOARDREV="$BOARDREV"
+CHIPREV="$CHIPREV"
+fuselevel="$fuselevel"
+EOF
+
 # Adapted from p2972-0000.conf.common in L4T kit
 TOREV="a01"
 BPFDTBREV="a01"
@@ -296,7 +318,7 @@ printf "0x%x\n" $(( (BSP_BRANCH<<16) | (BSP_MAJOR<<8) | BSP_MINOR )) >>${MACHINE
 bytes=$(wc -c ${MACHINE}_bootblob_ver.txt | cut -d' ' -f1)
 cksum=$(python3 -c "import zlib; print(\"%X\" % (zlib.crc32(open(\"${MACHINE}_bootblob_ver.txt\", \"rb\").read()) & 0xFFFFFFFF))")
 echo "BYTES:$bytes CRC32:$cksum" >>${MACHINE}_bootblob_ver.txt
-if [ -z "$sdcard" ]; then
+if [ -z "$sdcard" -a -z "$external_device" ]; then
     appfile=$(basename "$imgfile").img
     if [ -n "$dataimg" ]; then
 	datafile=$(basename "$dataimg").img
@@ -306,10 +328,10 @@ else
     datafile="$dataimg"
 fi
 appfile_sed=
-if [ $bup_blob -ne 0 ]; then
+if [ $bup_blob -ne 0 -o $rcm_boot -ne 0 ]; then
     kernfile="${kernfile:-boot.img}"
     appfile_sed="-e/APPFILE/d -e/DATAFILE/d"
-elif [ $no_flash -eq 0 -a -z "$sdcard" ]; then
+elif [ $no_flash -eq 0 -a -z "$sdcard" -a -z "$external_device" ]; then
     appfile_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile, -es,DATAFILE,$datafile,"
 else
     pre_sdcard_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile,"
@@ -350,6 +372,10 @@ tos tos-optee_t194.img; \
 eks eks.img; \
 bootloader_dtb $dtb_file"
 
+if [ $rcm_boot -ne 0 ]; then
+    BINSARGS="$BINSARGS; kernel $kernfile; kernel_dtb $kernel_dtbfile"
+fi
+
 bctargs="$UPHY_CONFIG $MINRATCHET_CONFIG \
          --device_config $DEVICE_CONFIG \
          --misc_config tegra194-mb1-bct-misc-flash.cfg \
@@ -366,11 +392,13 @@ bctargs="$UPHY_CONFIG $MINRATCHET_CONFIG \
          --overlay_dtb $OVERLAY_DTB_FILE"
 
 
-if [ $bup_blob -ne 0 -o "$sdcard" = "yes" ]; then
+if [ $bup_blob -ne 0 -o "$sdcard" = "yes" -o "$external_device" = "yes" ]; then
     tfcmd=sign
     skipuid="--skipuid"
+elif [ $rcm_boot -ne 0 ]; then
+    tfcmd=rcmboot
 else
-    if [ -z "$sdcard" -a $no_flash -eq 0 -a "$spi_only" != "yes" ]; then
+    if [ -z "$sdcard" -a -z "$external_device" -a $no_flash -eq 0 -a "$spi_only" != "yes" ]; then
 	rm -f "$appfile"
         echo "Creating sparseimage ${appfile}..."
 	$here/mksparse -b ${blocksize} --fillpattern=0 "$imgfile" "$appfile" || exit 1
@@ -474,7 +502,7 @@ flashcmd="python3 $flashappname ${inst_args} --chip 0x19 --bl nvtboot_recovery_c
 	      --boot_chain A \
 	      --bct_backup \
 	      --secondary_gpt_backup \
-	      $bctargs $ramcodeargs \
+	      $bctargs $ramcodeargs $extdevargs \
 	      --bins \"$BINSARGS\""
 
 if [ $bup_blob -ne 0 ]; then
@@ -497,7 +525,7 @@ if [ $bup_blob -ne 0 ]; then
     l4t_bup_gen "$flashcmd" "$spec" "$fuselevel" t186ref "$keyfile" "$sbk_keyfile" 0x19 || exit 1
 else
     eval $flashcmd < /dev/null || exit 1
-    if [ -n "$sdcard" ]; then
+    if [ -n "$sdcard" -o -n "$external_device" ]; then
 	if [ -n "$pre_sdcard_sed" ]; then
 	    rm -f signed/flash.xml.tmp.in
 	    mv signed/flash.xml.tmp signed/flash.xml.tmp.in
