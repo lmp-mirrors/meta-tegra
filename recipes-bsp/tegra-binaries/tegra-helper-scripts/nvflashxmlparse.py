@@ -8,6 +8,7 @@ import logging
 
 uuids = {}
 ignore_partition_ids = False
+boot_devices = ["spi", "sdmmc_boot"]
 
 def generate_guid(guid):
     global uuids
@@ -144,13 +145,24 @@ class PartitionLayout(object):
             self.devtypes.append(dev.type)
 
 
-def extract_layout(infile, devtype, outf):
+def extract_layout(infile, devtype, outf, new_devtype=None, sector_count=0):
     import xml.etree.ElementTree as ET
     tree = ET.parse(infile)
     root = tree.getroot()
     for dev in root.findall('device'):
         if dev.get('type') != devtype:
             root.remove(dev)
+    devs = root.findall('device')
+    if len(devs) != 1:
+        raise RuntimeError("{} unexpectedly contains multiple devices after extraction".format(infile))
+    dev = devs[0]
+    if new_devtype:
+        if dev.get('type') != devtype:
+            raise RuntimeError("Could not convert device type {} to {}: old type not found".format(devtype, new_devtype))
+        dev.set('type', new_devtype)
+        dev.set('instance', '3' if new_devtype == 'sdmmc_user' else '0')
+    if sector_count != 0:
+        dev.set('num_sectors', str(sector_count))
     tree.write(outf, encoding='unicode', xml_declaration=True)
     outf.write("\n")
 
@@ -218,11 +230,12 @@ def main():
         description="""
 Extracts partition information from an NVIDIA flash.xml file
 """)
-    parser.add_argument('-t', '--type', help='device type to extract information for', action='store')
+    parser.add_argument('-t', '--type', help='device type to extract information for, must either match a <device> tag or the generic "boot" or "rootfs" names', action='store')
     parser.add_argument('-l', '--list-types', help='list the device types described in the file', action='store_true')
     parser.add_argument('-e', '--extract', help='generate a new XML file extracting just the specified device type', action='store_true')
+    parser.add_argument('--change-device-type', help='(for use with --extract) change the <device> tag type attribute to the specifed value', action='store')
     parser.add_argument('-s', '--split', help='SDCard XML output file for MMC/SDCard split on Jetson AGX Xavier', action='store')
-    parser.add_argument('-S', '--sdcard-size', help='SDCard size for use with --split', action='store', default="33554432")
+    parser.add_argument('-S', '--sdcard-size', '--storage-size', help='storage size for use with --split or --extract', action='store', default="0")
     parser.add_argument('-o', '--output', help='file to write output to', action='store')
     parser.add_argument('-v', '--verbose', help='verbose logging', action='store_true')
     parser.add_argument('filename', help='name of the XML file to parse', action='store')
@@ -239,6 +252,8 @@ Extracts partition information from an NVIDIA flash.xml file
             outf = open(args.output, "w")
         else:
             outf = sys.stdout
+        if args.sdcard_size == "0":
+            args.sdcard_size = "33554432"
         split_layout(args.filename, outf, sdcardf, size_to_sectors(args.sdcard_size))
         return 0
 
@@ -247,6 +262,22 @@ Extracts partition information from an NVIDIA flash.xml file
             raise RuntimeError("Must specify --type for layouts with multiple devices")
         args.type = layout.devtypes[0]
     else:
+        # Support 'boot' as an alias for one of the boot device types ('spi', 'sdmmc_boot')
+        # Support 'rootfs' as an alias for a device the is not one of boot device types
+        if args.type in ['boot', 'rootfs']:
+            if layout.device_count > 2:
+                raise RuntimeError("Generic device types not supported for layouts with 3+ devices")
+            devs = {}
+            if layout.devtypes[0] in boot_devices:
+                devs['boot'] = layout.devtypes[0]
+                devs['rootfs'] = layout.devtypes[1]
+            elif layout.devtypes[1] in boot_devices:
+                # This should be very unlikely
+                devs['boot'] = layout.devtypes[1]
+                devs['rootfs'] = layout.devtypes[0]
+            else:
+                raise RuntimeError("Layout has no boot devices")
+            args.type = devs[args.type]
         if args.type not in layout.devices:
             raise RuntimeError("Device type '{}' not present; available types: {}".format(args.type,
                                                                                           ', '.join(list(layout.devices.keys()))))
@@ -256,7 +287,7 @@ Extracts partition information from an NVIDIA flash.xml file
         outf = sys.stdout
 
     if args.extract:
-        extract_layout(args.filename, args.type, outf)
+        extract_layout(args.filename, args.type, outf, args.change_device_type, size_to_sectors(args.sdcard_size))
     else:
         partitions = [part for part in layout.devices[args.type].partitions if not part.is_partition_table()]
         blksize = layout.devices[args.type].sector_size
