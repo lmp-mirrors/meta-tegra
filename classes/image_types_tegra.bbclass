@@ -56,6 +56,8 @@ IMAGE_TEGRAFLASH_ESPIMG ?= "${DEPLOY_DIR_IMAGE}/${TEGRA_ESP_IMAGE}-${MACHINE}.es
 DATAFILE ??= ""
 IMAGE_TEGRAFLASH_DATA ??= ""
 
+IMAGE_TEGRAFLASH_INITRD_FLASHER = "${DEPLOY_DIR_IMAGE}/${TEGRAFLASH_INITRD_FLASH_IMAGE}-${MACHINE}.cboot"
+
 TEGRA_SPIFLASH_BOOT ??= ""
 TEGRA_ROOTFS_AND_KERNEL_ON_SDCARD ??=""
 
@@ -319,6 +321,7 @@ create_tegraflash_pkg:tegra194() {
     cp "${STAGING_DATADIR}/tegraflash/${EMMC_BCT_OVERRIDE}" .
     cp "${IMAGE_TEGRAFLASH_KERNEL}" ./${LNXFILE}
     cp "${IMAGE_TEGRAFLASH_ESPIMG}" ./esp.img
+    cp "${IMAGE_TEGRAFLASH_INITRD_FLASHER}" ./initrd-flash.img
     if [ -n "${DATAFILE}" -a -n "${IMAGE_TEGRAFLASH_DATA}" ]; then
         cp "${IMAGE_TEGRAFLASH_DATA}" ./${DATAFILE}
         DATAARGS="--datafile ${DATAFILE}"
@@ -359,6 +362,13 @@ create_tegraflash_pkg:tegra194() {
 MACHINE=${TNSPEC_MACHINE} ./tegra194-flash-helper.sh $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 END
     chmod +x doflash.sh
+    rm -f doflash-initrd.sh
+    cat > doflashinitrd.sh <<END
+#!/bin/sh
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh -c "flash;reboot recovery" --spi-only $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@" || exit 1
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ./initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+END
+    chmod +x doflashinitrd.sh
     if [ -e ./odmfuse_pkc.xml ]; then
         cat > burnfuses.sh <<END
 #!/bin/sh
@@ -536,7 +546,8 @@ do_image_tegraflash[depends] += "${TEGRAFLASH_PKG_DEPENDS} dtc-native:do_populat
                                  tegra-redundant-boot-rollback:do_populate_sysroot virtual/kernel:do_deploy \
                                  ${@'${INITRD_IMAGE}:do_image_complete' if d.getVar('INITRD_IMAGE') != '' else  ''} \
                                  ${@'${TEGRA_ESP_IMAGE}:do_image_complete' if d.getVar('TEGRA_ESP_IMAGE') != '' else  ''} \
-                                 virtual/bootloader:do_deploy virtual/secure-os:do_deploy ${TEGRA_SIGNING_EXTRA_DEPS} ${DTB_EXTRA_DEPS}"
+                                 virtual/bootloader:do_deploy virtual/secure-os:do_deploy ${TEGRA_SIGNING_EXTRA_DEPS} ${DTB_EXTRA_DEPS} \
+                                 ${TEGRAFLASH_INITRD_FLASH_IMAGE}:do_image_complete"
 IMAGE_TYPEDEP:tegraflash += "${IMAGE_TEGRAFLASH_FS_TYPE}"
 
 oe_make_bup_payload() {
