@@ -46,13 +46,6 @@ functions :
 		    nofua = false;
 		    removable = true;
 		    file = "@ROOTFS_DEVICE@";
-		},
-		{
-		    cdrom = false;
-		    ro = false;
-		    nofua = false;
-		    removable = true;
-		    file = "@INITRD_FLASH_TMPDEV@";
 		});
         };
         os_descs = ( );

@@ -12,7 +12,7 @@ sernum=$(cat /proc/device-tree/serial-number 2>/dev/null | tr -d '\000')
 sed_args=
 for varname in "$@"; do
     val=$(eval echo \$$varname)
-    sed_args="${sed_args} -e\"s,@${varname}@,$val,\""
+    sed_args="${sed_args} -es,@${varname}@,$val,"
 done
 sed -e"s,@SERIALNUMBER@,$sernum," $sed_args /usr/share/usbgx/$SCHEMENAME.schema.in > /run/usbgx/l4t.schema
 chmod 0644 /run/usbgx/l4t.schema
