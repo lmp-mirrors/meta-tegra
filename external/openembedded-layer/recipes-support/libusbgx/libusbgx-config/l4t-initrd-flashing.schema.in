@@ -27,19 +27,12 @@ functions :
 {
     mass_storage_l4t :
     {
-        instance = "";
+        instance = "l4t_storage";
         type = "mass_storage";
         attrs :
         {
 	    stall = true;
 	    luns = (
-	        {
-		    cdrom = false;
-		    ro = false;
-		    nofua = false;
-		    removable = false;
-		    file = "@INITRD_FLASH_DUMMY@";
-		},
 	        {
 		    cdrom = false;
 		    ro = false;
