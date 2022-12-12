@@ -19,4 +19,5 @@ do_install() {
 }
 
 FILES:${PN} = "/"
+RDEPENDS:${PN} = "util-linux-blkdiscard"
 RRECOMMENDS:${PN} = "kernel-module-spi-tegra114"
