@@ -24,6 +24,7 @@ TEGRA_BUPGEN_STRIP_IMG_NAMES ??= ""
 TEGRA_BUPGEN_STRIP_CMD ??= "${@tegraflash_bupgen_strip_cmd(d)}"
 
 DTBFILE ?= "${@os.path.basename(d.getVar('KERNEL_DEVICETREE').split()[0])}"
+INITRD_FLASH_DTBFILE = "${@os.path.splitext(d.getVar('DTBFILE'))[0]}.initrdflash.dtb"
 LNXFILE ?= "boot.img"
 LNXSIZE ?= "83886080"
 TEGRA_RECOVERY_KERNEL_PART_SIZE ??= "83886080"
@@ -363,12 +364,22 @@ MACHINE=${TNSPEC_MACHINE} ./tegra194-flash-helper.sh $DATAARGS flash.xml.in ${DT
 END
     chmod +x doflash.sh
     rm -f doflash-initrd.sh
-    cat > doflashinitrd.sh <<END
+    cat > doflash-initrd.sh <<END
 #!/bin/sh
-MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh -c "flash;reboot recovery" --spi-only $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@" || exit 1
-MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ./initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+set -e
+if [ -z "\$SKIP_BL_FLASH" ]; then
+   MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh -c "flash;reboot recovery" --spi-only $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+fi
+rm -f ${INITRD_FLASH_DTBFILE}
+cp ${DTBFILE} ${INITRD_FLASH_DTBFILE}
+BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}}
+bootargs="\$(fdtget ${INITRD_FLASH_DTBFILE} /chosen bootargs) l4tflash.bootdev=/dev/\${BOOTDEV%%p*}"
+fdtput -t s ${INITRD_FLASH_DTBFILE} /chosen bootargs "\$bootargs"
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${INITRD_FLASH_DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ./initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+. ./boardvars.sh
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} fuselevel=\${fuselevel:-fuselevel_production} serial_number=\${serial_number} ./tegra194-flash-helper.sh --external-device $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 END
-    chmod +x doflashinitrd.sh
+    chmod +x doflash-initrd.sh
     if [ -e ./odmfuse_pkc.xml ]; then
         cat > burnfuses.sh <<END
 #!/bin/sh
