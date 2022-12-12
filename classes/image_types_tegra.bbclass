@@ -377,7 +377,7 @@ bootargs="\$(fdtget ${INITRD_FLASH_DTBFILE} /chosen bootargs) l4tflash.bootdev=/
 fdtput -t s ${INITRD_FLASH_DTBFILE} /chosen bootargs "\$bootargs"
 MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${INITRD_FLASH_DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ./initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 . ./boardvars.sh
-MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} fuselevel=\${fuselevel:-fuselevel_production} serial_number=\${serial_number} ./tegra194-flash-helper.sh --external-device $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} fuselevel=\${fuselevel:-fuselevel_production} serial_number=\${serial_number} ./tegra194-flash-helper.sh --external-device -y $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 END
     chmod +x doflash-initrd.sh
     if [ -e ./odmfuse_pkc.xml ]; then
