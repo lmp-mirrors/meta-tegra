@@ -61,6 +61,10 @@ while true; do
 	--external-device)
 	    external_device=1
 	    extdevargs="--external_device"
+	    if [ -z "$serial_number" ]; then
+		echo "ERR: missing serial_number environment variable for external device flashing" >&2
+		exit 1
+	    fi
 	    shift
 	    ;;
 	--datafile)
@@ -228,6 +232,9 @@ else
     board_revision=`$here/chkbdinfo -r ${cvm_bin} | tr -d '[:space:]' | tr [a-z] [A-Z]`
     BOARDREV="$board_revision"
 fi
+if [ -z "$serial_number" ]; then
+    serial_number=$($here/chkbdinfo -a ${cvm_bin} | tr -d '[:space:]')
+fi
 
 [ -f ${cvm_bin} ] && rm -f ${cvm_bin}
 
@@ -239,6 +246,7 @@ BOARDSKU="$BOARDSKU"
 BOARDREV="$BOARDREV"
 CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
+serial_number="$serial_number"
 EOF
 
 # Adapted from p2972-0000.conf.common in L4T kit
@@ -347,11 +355,13 @@ kernel_dtbfile="kernel_$dtb_file_basename"
 rm -f "$kernel_dtbfile"
 cp "$dtb_file" "$kernel_dtbfile"
 
-if [ "$spi_only" = "yes" ]; then
+if [ "$spi_only" = "yes" -o $external_device -eq 1 ]; then
     if [ ! -e "$here/nvflashxmlparse" ]; then
 	echo "ERR: missing nvflashxmlparse script" >&2
 	exit 1
     fi
+fi
+if [ "$spi_only" = "yes" ]; then
     "$here/nvflashxmlparse" --extract -t boot -o flash.xml.tmp "$flash_in" || exit 1
 else
     cp "$flash_in" flash.xml.tmp
@@ -524,6 +534,13 @@ if [ $bup_blob -ne 0 ]; then
 else
     eval $flashcmd < /dev/null || exit 1
     if [ -n "$sdcard" -o $external_device -eq 1 ]; then
+	if [ $external_device -eq 1 ]; then
+	    if [ -z "$serial_number" ]; then
+		echo "ERR: missing serial number for initrd-flashing external device" >&2
+		exit 1
+	    fi
+	    make_sdcard_args="$make_sdcard_args --serial-number $serial_number"
+	fi
 	if [ -n "$pre_sdcard_sed" ]; then
 	    rm -f signed/flash.xml.tmp.in
 	    mv signed/flash.xml.tmp signed/flash.xml.tmp.in
