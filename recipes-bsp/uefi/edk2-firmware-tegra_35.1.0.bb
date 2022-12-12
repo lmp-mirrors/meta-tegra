@@ -16,16 +16,18 @@ DEPENDS:append:tegra194 = " nvdisp-init"
 
 EDK2_SRC_URI = "gitsm://github.com/NVIDIA/edk2.git;protocol=https;branch=rel-35-edk2-stable-202205"
 EDK2_PLATFORMS_SRC_URI = "git://github.com/NVIDIA/edk2-platforms.git;protocol=https;branch=rel-35-upstream-20220208"
-EDK2_NVIDIA_SRC_URI = "git://github.com/NVIDIA/edk2-nvidia.git;protocol=https;branch=rel-35"
+EDK2_NVIDIA_SRC_URI = "git://github.com/NVIDIA/edk2-nvidia.git;protocol=https;branch=rel-35-updates"
 EDK2_NONOSI_SRC_URI = "git://github.com/NVIDIA/edk2-non-osi.git;protocol=https;branch=rel-35-upstream-20220404"
 EDK2_NVIDIA_NONOSI_SRC_URI = "git://github.com/NVIDIA/edk2-nvidia-non-osi.git;protocol=https;branch=rel-35"
 
-# These correspond to the jetson-r35.1 tag in each repo
 SRCREV_edk2 = "7d82301fd1b08a16e144ac0a038ef7352c4b570c"
 SRCREV_edk2-non-osi = "7dcfcf88b8a99cc3ed381cb571d1f2e34e4734d4"
-SRCREV_edk2-nvidia = "716592d2a8ec2c7c26eb9c80d1b3b845a6984317"
+SRCREV_edk2-nvidia = "a8ed741572a241cd7f1051d715bd845ca849d084"
 SRCREV_edk2-nvidia-non-osi = "5631d8434500652f53badf2885a24a46951b3e5b"
 SRCREV_edk2-platforms = "c9e377b00fc086fcb5a5b41663a0149bde9bcc2e"
+
+# edk2-nvidia SRCREV is one commit past the 20220930 tag
+PV .= "-20220930.1"
 
 SRC_URI = "\
     ${EDK2_SRC_URI};name=edk2;destsuffix=edk2-tegra/edk2;nobranch=1 \
@@ -37,12 +39,11 @@ SRC_URI = "\
 
 SRCREV_FORMAT = "edk2_edk2-platforms_edk2-non-osi_edk2-nvidia_edk2-nvidia-non-osi"
 
-SRC_URI += "file://0001-Fix-eeprom-customer-part-numbers.patch"
-SRC_URI += "file://0002-Replace-libc-mem-calls-with-EDK2-defined-calls.patch"
-SRC_URI += "file://0003-Disable-outline-atomics-in-eqos-driver.patch"
+SRC_URI += "file://0001-Fix-eeprom-customer-part-numbers.patch;patchdir=.."
+SRC_URI += "file://0002-Replace-libc-mem-calls-with-EDK2-defined-calls.patch;patchdir=.."
+SRC_URI += "file://0003-Disable-outline-atomics-in-eqos-driver.patch;patchdir=.."
 
 S = "${WORKDIR}/edk2-tegra/edk2"
-S:task-patch = "${WORKDIR}/edk2-tegra"
 
 COMPATIBLE_MACHINE = "(tegra)"
 
