@@ -226,7 +226,7 @@ confirm() {
     done
 }
 
-ARGS=$(getopt -l "serial-number:" -o "yhs:b:" -n "$me" -- "$@")
+ARGS=$(getopt -l "serial-number:,keep-connection" -o "yhs:b:" -n "$me" -- "$@")
 if [ $? -ne 0 ]; then
     usage
     exit 1
@@ -239,6 +239,7 @@ preconfirmed=
 outsize=
 basename=
 wait_for_usb_device=
+keep_connection=
 serial_number=
 while true; do
     case "$1" in
@@ -246,6 +247,10 @@ while true; do
 	    wait_for_usb_device=yes
 	    serial_number="$2"
 	    shift 2
+	    ;;
+	--keep-connection)
+	    keep_connection=yes
+	    shift
 	    ;;
 	-h)
 	    usage
@@ -389,4 +394,11 @@ else
     fi
 fi
 echo "[OK: $output]"
+if [ "$wait_for_usb_device" = "yes" -a "$keep_connection" != "yes" ]; then
+    echo "Disconnecting $output"
+    if ! udisksctl power-off -b $output; then
+        echo "WARN: failed to disconnect $output"
+    fi
+fi
+
 exit 0
