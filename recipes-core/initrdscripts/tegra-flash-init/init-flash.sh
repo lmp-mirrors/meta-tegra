@@ -29,6 +29,30 @@ fi
 
 if /usr/bin/l4t-gadget-config-setup l4t-initrd-flashing ROOTFS_DEVICE; then
     /usr/bin/gadget-start
+    udcname=$(cat /sys/kernel/config/usb_gadget/l4t/UDC)
+    echo -n "Waiting for host to connect..."
+    while true; do
+	suspended=$(expr $(cat /sys/class/udc/$udcname/device/gadget/suspended) \+ 0)
+	if [ $suspended -eq 0 ]; then
+	    echo "[connected]"
+	    break
+	fi
+	sleep 1
+	echo -n "."
+    done
+    echo -n "Waiting for host to disconnect..."
+    while true; do
+	suspended=$(expr $(cat /sys/class/udc/$udcname/device/gadget/suspended) \+ 0)
+	if [ $suspended -eq 1 ]; then
+	    echo "[disconnected]"
+	    break
+	fi
+	sleep 5
+	echo -n "."
+    done
+    echo "Rebooting..."
+    reboot -f
+else
+    echo "ERR: could not set up USB gadget for $ROOTFS_DEVICE" >&2
 fi
-
 exec sh
