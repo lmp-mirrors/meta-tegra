@@ -29,6 +29,7 @@ Options:
   -s size               Sets size of SDcard image when creating an image file (required)
   -b basename           Base filename for SDcard image (required if no output specified)
   -y                    Skip prompting for confirmation
+  --serial-number <sn>  Select USB /dev/sd[a-z] device based on serial number
 
 Confirmation is required if <output> is a device or if it is the name of
 a file that already exists.
@@ -225,7 +226,7 @@ confirm() {
     done
 }
 
-ARGS=$(getopt -o "yhs:b:" -n "$me" -- "$@")
+ARGS=$(getopt -l "serial-number:" -o "yhs:b:" -n "$me" -- "$@")
 if [ $? -ne 0 ]; then
     usage
     exit 1
@@ -237,25 +238,32 @@ unset ARGS
 preconfirmed=
 outsize=
 basename=
+wait_for_usb_device=
+serial_number=
 while true; do
     case "$1" in
-	'-h')
+	--serial-number)
+	    wait_for_usb_device=yes
+	    serial_number="$2"
+	    shift 2
+	    ;;
+	-h)
 	    usage
 	    exit 0
 	    ;;
-	'-y')
+	-y)
 	    preconfirmed=yes
 	    shift
 	    ;;
-	'-s')
+	-s)
 	    outsize=$(compute_size "$2")
 	    shift 2
 	    ;;
-	'-b')
+	-b)
 	    basename="$2"
 	    shift 2
 	    ;;
-	'--')
+	--)
 	    shift
 	    break
 	    ;;
@@ -277,6 +285,26 @@ output="$2"
 if [ -z "$cfgfile" ]; then
     echo "ERR: missing flash config file parameter" >&2
     exit 1
+fi
+
+if [ "$wait_for_usb_device" = "yes" ]; then
+    echo -n "Looking for USB storage device from $serial_number..."
+    output=
+    while [ -z "$output" ]; do
+	for candidate in /dev/sd[a-z]; do
+	    [ -b "$candidate" ] || continue
+	    cand_sernum=$(udevadm info --query=property $candidate | grep '^ID_SERIAL_SHORT=' | cut -d= -f2)
+	    if [ "$cand_sernum" = "$serial_number" ]; then
+		echo "[$candidate]"
+		output="$candidate"
+		break
+	    fi
+	done
+	if [ -z "$output" ]; then
+	    sleep 1
+	    echo -n "."
+	fi
+    done
 fi
 
 if [ -z "$output" ]; then
@@ -315,7 +343,7 @@ else
     fi
 fi
 
-mapfile PARTS < <("$here/nvflashxmlparse" -t sdcard "$cfgfile")
+mapfile PARTS < <("$here/nvflashxmlparse" -t rootfs "$cfgfile")
 if [ ${#PARTS[@]} -eq 0 ]; then
     echo "No partition definitions found in $cfgfile" >&2
     exit 1
