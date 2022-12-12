@@ -15,14 +15,15 @@ UBOOT_EXTLINUX_KERNEL_IMAGE ?= "/boot/${KERNEL_IMAGETYPE}"
 UBOOT_EXTLINUX_INITRD ?= "${@'/boot/initrd' if d.getVar('INITRAMFS_IMAGE') != '' and d.getVar('INITRAMFS_IMAGE_BUNDLE') != '1' else ''}"
 UBOOT_EXTLINUX_KERNEL_ARGS ?= "${KERNEL_ARGS}"
 
-TEGRA_BOOTCONTROL_OVERLAYS ?= "L4TConfiguration.dtbo,L4TRootfsInfo.dtbo"
+TEGRA_BOOTORDER_OVERLAY ?= ""
+TEGRA_BOOTCONTROL_OVERLAYS ?= "L4TConfiguration.dtbo,L4TRootfsInfo.dtbo${@',${TEGRA_BOOTORDER_OVERLAY}' if d.getVar('TEGRA_BOOTORDER_OVERLAY') else ''}"
 
 TNSPEC_MACHINE ??= "${MACHINE}"
 TNSPEC_BOOTDEV ??= "mmcblk0p1"
 TNSPEC ?= "${TEGRA_BOARDID}-${TEGRA_FAB}-${TEGRA_BOARDSKU}-${TEGRA_BOARDREV}-1-${TEGRA_CHIPREV}-${TNSPEC_MACHINE}-${TNSPEC_BOOTDEV}"
 
 PREFERRED_PROVIDER_virtual/kernel ?= "linux-tegra"
-PREFERRED_PROVIDER_virtual/bootloader ?= "tegra-uefi-prebuilt"
+PREFERRED_PROVIDER_virtual/bootloader ?= "edk2-firmware-tegra"
 LIBGLVND_PROVIDER = "${@'libglvnd' if 'openembedded-layer' in d.getVar('BBFILE_COLLECTIONS').split() else 'libglvnd-tegra'}"
 PREFERRED_PROVIDER_libglvnd = "${LIBGLVND_PROVIDER}"
 PREFERRED_PROVIDER_virtual/egl = "${LIBGLVND_PROVIDER}"
