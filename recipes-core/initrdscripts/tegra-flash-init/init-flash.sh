@@ -7,9 +7,11 @@ mount -t configfs configfs -o nosuid,nodev,noexec /sys/kernel/config
 
 [ ! /usr/sbin/wd_keepalive ] || /usr/sbin/wd_keepalive &
 
+reboot_recovery=
 for bootarg in $(cat /proc/cmdline); do
     case "$bootarg" in
 	l4tflash.bootdev=*) export ROOTFS_DEVICE="${bootarg##l4tflash.bootdev=}" ;;
+	l4tflash.reboot-recovery) reboot_recovery=yes
     esac
 done
 
@@ -29,6 +31,9 @@ fi
 
 if /usr/bin/l4t-gadget-config-setup l4t-initrd-flashing ROOTFS_DEVICE; then
     /usr/bin/gadget-start
+    if [ -e /sys/class/usb_role/usb2-0-role-switch/role ]; then
+	echo "device" > /sys/class/usb_role/usb2-0-role-switch/role
+    fi
     udcname=$(cat /sys/kernel/config/usb_gadget/l4t/UDC)
     echo -n "Waiting for host to connect..."
     while true; do
@@ -50,8 +55,13 @@ if /usr/bin/l4t-gadget-config-setup l4t-initrd-flashing ROOTFS_DEVICE; then
 	sleep 5
 	echo -n "."
     done
+    sync
     echo "Rebooting..."
-    reboot -f
+    if [ -n "$reboot_recovery" ]; then
+	reboot-recovery
+    else
+	reboot -f
+    fi
 else
     echo "ERR: could not set up USB gadget for $ROOTFS_DEVICE" >&2
 fi

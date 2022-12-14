@@ -19,5 +19,5 @@ do_install() {
 }
 
 FILES:${PN} = "/"
-RDEPENDS:${PN} = "util-linux-blkdiscard"
+RDEPENDS:${PN} = "util-linux-blkdiscard tegra-flash-reboot"
 RRECOMMENDS:${PN} = "kernel-module-spi-tegra114"
