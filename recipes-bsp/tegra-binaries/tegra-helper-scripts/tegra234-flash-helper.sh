@@ -1,15 +1,18 @@
 #!/bin/bash
 bup_blob=0
+rcm_boot=0
 keyfile=
 sbk_keyfile=
 user_keyfile=
 spi_only=
+external_device=0
 sdcard=
 no_flash=0
 flash_cmd=
 imgfile=
 dataimg=
 inst_args=""
+extdevargs=
 blocksize=4096
 
 # These functions are used in odmsign.func but do not
@@ -24,7 +27,7 @@ cp2local() {
     :
 }
 
-ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sdcard,spi-only,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
+ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sdcard,spi-only,boot-only,external-device,rcm-boot,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error parsing options" >&2
     exit 1
@@ -47,8 +50,21 @@ while true; do
         sdcard=yes
         shift
         ;;
-    --spi-only)
+    --spi-only|--boot-only)
         spi_only=yes
+        shift
+        ;;
+    --rcm-boot)
+        rcm_boot=1
+        shift
+        ;;
+    --external-device)
+        external_device=1
+	extdevargs="--external_device"
+	if [ -z "$serial_number" ]; then
+	    echo "ERR: missing serial_number environment variable for external device flashing" >&2
+	    exit 1
+	fi
         shift
         ;;
     --datafile)
@@ -127,6 +143,10 @@ if [ -z "$FLASHVARS" ]; then
     exit 1
 fi
 
+if [ $rcm_boot -eq 1 ]; then
+    OVERLAY_DTB_FILE=$(echo "$OVERLAY_DTB_FILE" | sed -e's!BootOrder[^.]*\.dtbo\(,\|$\)!!')
+fi
+
 # Temp file for storing cvm.bin in, if we need to query the board for its
 # attributes
 cvm_bin=$(mktemp cvm.bin.XXXXX)
@@ -190,6 +210,8 @@ if [ -z "$CHIPREV" -o -z "$fuselevel" ]; then
             fi
             ;;
     esac
+else
+    skipuid="--skipuid"
 fi
 
 if [ -z "$FAB" -o -z "$BOARDID" ]; then
@@ -246,11 +268,14 @@ else
     board_sku=`$here/chkbdinfo -k ${cvm_bin} | tr -d '[:space:]' | tr [a-z] [A-Z]`
     BOARDSKU="$board_sku"
 fi
-if [ "${BOARDREV+isset}" = "isset" ]; then
+if [ -n "$BOARDREV" ]; then
     board_revision="$BOARDREV"
 else
     board_revision=`$here/chkbdinfo -r ${cvm_bin} | tr -d '[:space:]' | tr [a-z] [A-Z]`
     BOARDREV="$board_revision"
+fi
+if [ -z "$serial_number" ]; then
+    serial_number=$($here/chkbdinfo -a ${cvm_bin} | tr -d '[:space:]')
 fi
 
 [ -f ${cvm_bin} ] && rm -f ${cvm_bin}
@@ -259,6 +284,17 @@ fi
 [ -n "$FAB" ] || FAB=TS4
 [ -n "$fuselevel" ] || fuselevel=fuselevel_production
 [ -n "${BOOTDEV}" ] || BOOTDEV="mmcblk0p1"
+
+rm -f boardvars.sh
+cat >boardvars.sh <<EOF
+BOARDID="$BOARDID"
+FAB="$FAB"
+BOARDSKU="$BOARDSKU"
+BOARDREV="$BOARDREV"
+CHIPREV="$CHIPREV"
+fuselevel="$fuselevel"
+serial_number="$serial_number"
+EOF
 
 if [ "$BOARDID" = "3701" -a "$FAB" = "301" ]; then
     RAMCODE=0
@@ -314,7 +350,7 @@ printf "0x%x\n" $(( (BSP_BRANCH<<16) | (BSP_MAJOR<<8) | BSP_MINOR )) >>${MACHINE
 bytes=$(wc -c ${MACHINE}_bootblob_ver.txt | cut -d' ' -f1)
 cksum=$(python3 -c "import zlib; print(\"%X\" % (zlib.crc32(open(\"${MACHINE}_bootblob_ver.txt\", \"rb\").read()) & 0xFFFFFFFF))")
 echo "BYTES:$bytes CRC32:$cksum" >>${MACHINE}_bootblob_ver.txt
-if [ -z "$sdcard" ]; then
+if [ -z "$sdcard" -a $external_device -eq 0 ]; then
     appfile=$(basename "$imgfile").img
     if [ -n "$dataimg" ]; then
     datafile=$(basename "$dataimg").img
@@ -324,10 +360,10 @@ else
     datafile="$dataimg"
 fi
 appfile_sed=
-if [ $bup_blob -ne 0 ]; then
+if [ $bup_blob -ne 0 -o $rcm_boot -ne 0 ]; then
     kernfile="${kernfile:-boot.img}"
     appfile_sed="-e/APPFILE/d -e/DATAFILE/d"
-elif [ $no_flash -eq 0 -a -z "$sdcard" ]; then
+elif [ $no_flash -eq 0 -a -z "$sdcard" -a $external_device -eq 0 ]; then
     appfile_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile, -es,DATAFILE,$datafile,"
 else
     pre_sdcard_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile,"
@@ -343,12 +379,14 @@ kernel_dtbfile="kernel_$dtb_file_basename"
 rm -f "$kernel_dtbfile"
 cp "$dtb_file" "$kernel_dtbfile"
 
-if [ "$spi_only" = "yes" ]; then
+if [ "$spi_only" = "yes" -o $external_device -eq 1 ]; then
     if [ ! -e "$here/nvflashxmlparse" ]; then
-    echo "ERR: missing nvflashxmlparse script" >&2
-    exit 1
+        echo "ERR: missing nvflashxmlparse script" >&2
+        exit 1
     fi
-    "$here/nvflashxmlparse" --extract -t spi -o flash.xml.tmp "$flash_in" || exit 1
+fi
+if [ "$spi_only" = "yes" ]; then
+    "$here/nvflashxmlparse" --extract -t boot -o flash.xml.tmp "$flash_in" || exit 1
 else
     cp "$flash_in" flash.xml.tmp
 fi
@@ -373,6 +411,10 @@ spe_fw spe_t234.bin; \
 tlk tos-optee_t234.img; \
 eks eks.img"
 
+if [ $rcm_boot -ne 0 ]; then
+    BINSARGS="$BINSARGS; kernel $kernfile; kernel_dtb $kernel_dtbfile"
+fi
+
 custinfo_args=
 if [ -f "$custinfo_out" ]; then
     custinfo_args="--cust_info $custinfo_out"
@@ -396,11 +438,13 @@ bctargs="$UPHY_CONFIG $MINRATCHET_CONFIG \
          --cpubl uefi_jetson.bin \
          --overlay_dtb $OVERLAY_DTB_FILE $custinfo_args"
 
-if [ $bup_blob -ne 0 -o "$sdcard" = "yes" ]; then
+if [ $bup_blob -ne 0 -o "$sdcard" = "yes" -o $external_device -eq 1 -o $no_flash -eq 1 ]; then
     tfcmd=sign
     skipuid="--skipuid"
+elif [ $rcm_boot -ne 0 ]; then
+    tfcmd=rcmboot
 else
-    if [ -z "$sdcard" -a $no_flash -eq 0 -a "$spi_only" != "yes" ]; then
+    if [ -z "$sdcard" -a $external_device -eq 0 -a $no_flash -eq 0 -a "$spi_only" != "yes" ]; then
         rm -f "$appfile"
         echo "Creating sparseimage ${appfile}..."
         $here/mksparse -b ${blocksize} --fillpattern=0 "$imgfile" "$appfile" || exit 1
@@ -414,7 +458,7 @@ else
 fi
 
 temp_user_dir=
-if [ -n "$keyfile" ]; then
+if [ -n "$keyfile" -o $rcm_boot -eq 1 ]; then
     if [ -n "$sbk_keyfile" ]; then
         if [ -z "$user_keyfile" ]; then
             rm -f "null_user_key.txt"
@@ -462,7 +506,11 @@ if [ -n "$keyfile" ]; then
     bpfdtbfilename="$BPFDTB_FILE"
     localbootfile="$kernfile"
     BINSARGS="--bins \"$BINSARGS\""
-    flashername=uefi_jetson_with_dtb.bin
+    flashername="uefi_jetson_with_dtb.bin"
+    UEFIBL="uefi_jetson_with_dtb.bin"
+    mb1filename="mb1_t234_prod.bin"
+    pscbl1filename="psc_bl1_t234_prod.bin"
+    tbcfilename="uefi_jetson.bin"
     BCT="--sdram_config"
     bctfilename=`echo $sdramcfg_files | cut -d, -f1`
     bctfile1name=`echo $sdramcfg_files | cut -d, -f2`
@@ -470,8 +518,6 @@ if [ -n "$keyfile" ]; then
     NV_ARGS=" "
     BCTARGS="$bctargs"
     rootfs_ab=0
-    rcm_boot=0
-    external_device=0
     . "$here/odmsign.func"
     (odmsign_ext) || exit 1
     if [ $bup_blob -eq 0 -a $no_flash -ne 0 ]; then
@@ -502,7 +548,7 @@ flashcmd="python3 $flashappname ${inst_args} --chip 0x23 --bl uefi_jetson_with_d
           --boot_chain A \
           --bct_backup \
           --secondary_gpt_backup \
-          $bctargs \
+          $bctargs $extdevargs \
           --bins \"$BINSARGS\""
 
 if [ $bup_blob -ne 0 ]; then
@@ -523,7 +569,14 @@ if [ $bup_blob -ne 0 ]; then
     l4t_bup_gen "$flashcmd" "$spec" "$fuselevel" t186ref "$keyfile" "$sbk_keyfile" 0x23 || exit 1
 else
     eval $flashcmd < /dev/null || exit 1
-    if [ -n "$sdcard" ]; then
+    if [ -n "$sdcard" -o $external_device -eq 1 ]; then
+	if [ $external_device -eq 1 ]; then
+	    if [ -z "$serial_number" ]; then
+		echo "ERR: missing serial number for initrd-flashing external device" >&2
+		exit 1
+	    fi
+	    make_sdcard_args="$make_sdcard_args --serial-number $serial_number"
+	fi
         if [ -n "$pre_sdcard_sed" ]; then
             rm -f signed/flash.xml.tmp.in
             mv signed/flash.xml.tmp signed/flash.xml.tmp.in
