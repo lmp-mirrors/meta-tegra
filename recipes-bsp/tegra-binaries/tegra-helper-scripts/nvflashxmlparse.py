@@ -85,7 +85,7 @@ class Partition(object):
                 self.size = (self.size + sector_size-1) // sector_size
 
         fname = element.find('filename')
-        self.filename = "" if fname is None else fname.text.strip()
+        self.filename = "" if fname is None or fname.text is None else fname.text.strip()
         logging.info("Partition {}: id={}, type={}, start={}, size={} parttype={}".format(self.name, self.id, self.type,
                                                                                           self.start_location, self.size,
                                                                                           self.parttype))
