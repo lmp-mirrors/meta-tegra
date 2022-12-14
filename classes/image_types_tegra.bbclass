@@ -427,6 +427,7 @@ create_tegraflash_pkg:tegra234() {
     cp "${STAGING_DATADIR}/tegraflash/${EMMC_BCT}" .
     cp "${IMAGE_TEGRAFLASH_KERNEL}" ./${LNXFILE}
     cp "${IMAGE_TEGRAFLASH_ESPIMG}" ./esp.img
+    cp "${IMAGE_TEGRAFLASH_INITRD_FLASHER}" ./initrd-flash.img
     if [ -n "${DATAFILE}" -a -n "${IMAGE_TEGRAFLASH_DATA}" ]; then
         cp "${IMAGE_TEGRAFLASH_DATA}" ./${DATAFILE}
         DATAARGS="--datafile ${DATAFILE}"
@@ -473,6 +474,24 @@ MACHINE=${TNSPEC_MACHINE} ./tegra234-flash-helper.sh $DATAARGS flash.xml.in ${DT
 END
     chmod +x doflash.sh
 
+    chmod +x doflash.sh
+    rm -f doflash-initrd.sh
+    cat > doflash-initrd.sh <<END
+#!/bin/sh
+set -e
+BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}}
+bootargs="\$(abootimg -i initrd-flash.img  | grep cmdline | sed -e's,^\* cmdline = ,,' -e's,l4tflash.bootdev=[^ ]*,,') l4tflash.bootdev=/dev/\${BOOTDEV%%p*} l4tflash.reboot-recovery"
+abootimg -u initrd-flash.img -c "cmdline=\$bootargs"
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra234-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT} ${ODMDATA} initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+. ./boardvars.sh
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} BOARDREV=\${BOARDREV:-${TEGRA_BOARDREV}} fuselevel=\${fuselevel:-fuselevel_production} serial_number=\${serial_number} ./tegra234-flash-helper.sh --external-device -y $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+extraargs=
+if [ -n "\$SKIP_BL_FLASH" ]; then
+    extraargs="-c reboot"
+fi
+MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} BOARDREV=\${BOARDREV:-${TEGRA_BOARDREV}} fuselevel=\${fuselevel:-fuselevel_production} ./tegra234-flash-helper.sh --spi-only $extraargs $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
+END
+    chmod +x doflash-initrd.sh
     if [ -e ./odmfuse_pkc.xml ]; then
         cat > burnfuses.sh <<END
 #!/bin/sh
