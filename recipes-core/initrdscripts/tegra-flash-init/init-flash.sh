@@ -8,10 +8,12 @@ mount -t configfs configfs -o nosuid,nodev,noexec /sys/kernel/config
 [ ! /usr/sbin/wd_keepalive ] || /usr/sbin/wd_keepalive &
 
 reboot_recovery=
+erase_mmcblk0=
 for bootarg in $(cat /proc/cmdline); do
     case "$bootarg" in
 	l4tflash.bootdev=*) export ROOTFS_DEVICE="${bootarg##l4tflash.bootdev=}" ;;
-	l4tflash.reboot-recovery) reboot_recovery=yes
+	l4tflash.reboot-recovery) reboot_recovery=yes ;;
+	l4tflash.erase-mmcblk0)  erase_mmcblk0=yes ;;
     esac
 done
 
@@ -19,14 +21,28 @@ if [ -z "$ROOTFS_DEVICE" ]; then
     echo "ERR: missing l4tflash.bootdev setting in kernel command line" >&2
     exec sh
 fi
+message="Waiting for $ROOTFS_DEVICE..."
+for tries in $(seq 1 15); do
+    if [ -e "$ROOTFS_DEVICE" ]; then
+	echo "[OK]"
+	break
+    fi
+    echo -n "$message"
+    message="."
+    sleep 1
+done
+if [ $tries -ge 15 ]; then
+    echo "[FAIL]"
+    exec sh
+fi
 if [ ! -b "$ROOTFS_DEVICE" ]; then
     echo "ERR: not a block device: $ROOTFS_DEVICE" >&2
     exec sh
 fi
 
-if ! blkdiscard -f "$ROOTFS_DEVICE"; then
-    echo "ERR: could not clear $ROOTFS_DEVICE" >&2
-    exec sh
+if [ -n "$erase_mmcblk0" -a -b /dev/mmcblk0 ]; then
+    echo "Erasing /dev/mmcblk0"
+    blkdiscard -f /dev/mmcblk0
 fi
 
 if /usr/bin/l4t-gadget-config-setup l4t-initrd-flashing ROOTFS_DEVICE; then
@@ -56,10 +72,11 @@ if /usr/bin/l4t-gadget-config-setup l4t-initrd-flashing ROOTFS_DEVICE; then
 	echo -n "."
     done
     sync
-    echo "Rebooting..."
     if [ -n "$reboot_recovery" ]; then
+	echo "Rebooting to RCM..."
 	reboot-recovery
     else
+	echo "Rebooting..."
 	reboot -f
     fi
 else
