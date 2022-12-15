@@ -12,6 +12,7 @@ SRC_URI = " \
     file://nvflashxmlparse.py \
     file://make-sdcard.sh \
     file://tegra-signimage-helper.sh \
+    file://find-jetson-usb.sh \
 "
 
 S = "${WORKDIR}"
@@ -23,4 +24,5 @@ do_install() {
     install -m 0755 ${S}/nvflashxmlparse.py ${D}${bindir}/tegra-flash/nvflashxmlparse
     install -m 0755 ${S}/make-sdcard.sh ${D}${bindir}/tegra-flash/make-sdcard
     install -m 0755 ${S}/tegra-signimage-helper.sh ${D}${bindir}/tegra-flash/tegra-signimage-helper
+    install -m 0755 ${S}/find-jetson-usb.sh ${D}${bindir}/tegra-flash/find-jetson-usb
 }
