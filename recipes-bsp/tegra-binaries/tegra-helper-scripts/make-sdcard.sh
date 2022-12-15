@@ -396,7 +396,13 @@ fi
 echo "[OK: $output]"
 if [ "$wait_for_usb_device" = "yes" -a "$keep_connection" != "yes" ]; then
     echo "Disconnecting $output"
-    if ! udisksctl power-off -b $output; then
+    for tries in $(seq 1 30); do
+	if udisksctl power-off -b $output 2>/dev/null; then
+	    break
+	fi
+	sleep 1
+    done
+    if [ $tries -ge 30 ]; then
         echo "WARN: failed to disconnect $output"
     fi
 fi
