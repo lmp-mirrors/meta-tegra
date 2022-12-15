@@ -294,6 +294,7 @@ BOARDREV="$BOARDREV"
 CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
 serial_number="$serial_number"
+usb_instance="$usb_instance"
 EOF
 
 if [ "$BOARDID" = "3701" -a "$FAB" = "301" ]; then
@@ -511,6 +512,8 @@ if [ -n "$keyfile" -o $rcm_boot -eq 1 ]; then
     mb1filename="mb1_t234_prod.bin"
     pscbl1filename="psc_bl1_t234_prod.bin"
     tbcfilename="uefi_jetson.bin"
+    custinfofilename="custinfo_out.bin"
+    BL_DIR="."
     BCT="--sdram_config"
     bctfilename=`echo $sdramcfg_files | cut -d, -f1`
     bctfile1name=`echo $sdramcfg_files | cut -d, -f2`
