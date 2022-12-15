@@ -247,6 +247,7 @@ BOARDREV="$BOARDREV"
 CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
 serial_number="$serial_number"
+usb_instance="$usb_instance"
 EOF
 
 # Adapted from p2972-0000.conf.common in L4T kit
@@ -422,7 +423,7 @@ else
 fi
 
 temp_user_dir=
-if [ -n "$keyfile" ]; then
+if [ -n "$keyfile" -o $rcm_boot -eq 1 ]; then
     if [ -n "$sbk_keyfile" ]; then
 	if [ -z "$user_keyfile" ]; then
 	    rm -f "null_user_key.txt"
