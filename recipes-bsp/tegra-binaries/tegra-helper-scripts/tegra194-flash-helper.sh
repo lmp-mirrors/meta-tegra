@@ -363,7 +363,14 @@ if [ "$spi_only" = "yes" -o $external_device -eq 1 ]; then
     fi
 fi
 if [ "$spi_only" = "yes" ]; then
-    "$here/nvflashxmlparse" --extract -t boot -o flash.xml.tmp "$flash_in" || exit 1
+    # p2888-0008 is JAXI, which does have a SPI flash
+    if [ "$BOARDID" = "2888" -a "$BOARDSKU" != "0008" ]; then
+	"$here/nvflashxmlparse" --split /dev/null --change-device-type nvme -o flash.xml.tmp "$flash_in" || exit 1
+    else
+	"$here/nvflashxmlparse" --extract -t boot -o flash.xml.tmp "$flash_in" || exit 1
+    fi
+elif [ $external_device -eq 1 -a "$BOARDID" = "2888" -a "$BOARDSKU" != "0008" ]; then
+    "$here/nvflashxmlparse" --split flash.xml.tmp --change-device-type nvme -o /dev/null "$flash_in" || exit 1
 else
     cp "$flash_in" flash.xml.tmp
 fi
