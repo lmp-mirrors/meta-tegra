@@ -369,13 +369,15 @@ END
 set -e
 BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}}
 bootdev_nopart=\$(echo "\$BOOTDEV" | sed -r -e's,[0-9]+\$,,')
-bootargs="\$(abootimg -i initrd-flash.img  | grep cmdline | sed -e's,^\* cmdline = ,,' -e's,l4tflash.bootdev=[^ ]*,,') l4tflash.bootdev=/dev/\${bootdev_nopart%%p}"
+bootargs="\$(abootimg -i initrd-flash.img  | grep cmdline | sed -e's,^\* cmdline = ,,' -e's,l4tflash[^ ]*,,g' -e's,  , ,g') l4tflash.bootdev=/dev/\${bootdev_nopart%%p}"
 if [ -z "\$SKIP_BL_FLASH" ]; then
     bootargs="\$bootargs l4tflash.reboot-recovery"
 fi
 ERASE_MMC=\${ERASE_MMC:-${TEGRAFLASH_ERASE_MMC}}
 if [ "\$BOOTDEV" != "mmcblk0p1" -a -n "\$ERASE_MMC" ]; then
-    bootargs="\$bootargs l4tflash.erase-mmcblk0"
+    if [ -z "\$SKIP_BL_FLASH" -o "${TEGRA_SPIFLASH_BOOT}" = "1" ]; then
+        bootargs="\$bootargs l4tflash.erase-mmcblk0"
+    fi
 fi
 abootimg -u initrd-flash.img -c "cmdline=\$bootargs"
 MACHINE=${TNSPEC_MACHINE} BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}} ./tegra194-flash-helper.sh --rcm-boot $DATAARGS flash.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} initrd-flash.img ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
@@ -405,14 +407,14 @@ END
         rm -f doflash.sh
         cat > doflash.sh <<END
 #!/bin/sh
-./nvflashxmlparse --split=flash-sdcard.xml.in --output=flash-mmc.xml.in --sdcard-size=${TEGRAFLASH_SDCARD_SIZE} flash.xml.in
+./nvflashxmlparse --split=flash-sdcard.xml.in --change-type=sdcard --output=flash-mmc.xml.in --sdcard-size=${TEGRAFLASH_SDCARD_SIZE} flash.xml.in
 MACHINE=${TNSPEC_MACHINE} ./tegra194-flash-helper.sh $DATAARGS flash-mmc.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 END
         chmod +x doflash.sh
         rm -f dosdcard.sh
         cat > dosdcard.sh <<END
 #!/bin/sh
-./nvflashxmlparse --split=flash-sdcard.xml.in --output=flash-mmc.xml.in --sdcard-size=${TEGRAFLASH_SDCARD_SIZE} flash.xml.in
+./nvflashxmlparse --split=flash-sdcard.xml.in --change-type=sdcard --output=flash-mmc.xml.in --sdcard-size=${TEGRAFLASH_SDCARD_SIZE} flash.xml.in
 MACHINE=${TNSPEC_MACHINE} BOARDID=\${BOARDID:-${TEGRA_BOARDID}} FAB=\${FAB:-${TEGRA_FAB}} CHIPREV=\${CHIPREV:-${TEGRA_CHIPREV}} BOARDSKU=\${BOARDSKU:-${TEGRA_BOARDSKU}} BOARDREV=\${BOARDREV:-${TEGRA_BOARDREV}} fuselevel=\${fuselevel:-fuselevel_production} ./tegra194-flash-helper.sh --sdcard -B ${TEGRA_BLBLOCKSIZE} -s ${TEGRAFLASH_SDCARD_SIZE} -b ${IMAGE_BASENAME} $DATAARGS flash-sdcard.xml.in ${DTBFILE} ${EMMC_BCT},${EMMC_BCT_OVERRIDE} ${ODMDATA} ${LNXFILE} ${IMAGE_BASENAME}.${IMAGE_TEGRAFLASH_FS_TYPE} "\$@"
 END
         chmod +x dosdcard.sh
@@ -488,7 +490,7 @@ END
 set -e
 BOOTDEV=\${BOOTDEV:-${TNSPEC_BOOTDEV}}
 bootdev_nopart=\$(echo "\$BOOTDEV" | sed -r -e's,[0-9]+\$,,')
-bootargs="\$(abootimg -i initrd-flash.img  | grep cmdline | sed -e's,^\* cmdline = ,,' -e's,l4tflash.bootdev=[^ ]*,,') l4tflash.bootdev=/dev/\${bootdev_nopart%%p}"
+bootargs="\$(abootimg -i initrd-flash.img  | grep cmdline | sed -e's,^\* cmdline = ,,' -e's,l4tflash[^ ]*,,g' -e's,  , ,g') l4tflash.bootdev=/dev/\${bootdev_nopart%%p}"
 if [ -z "\$SKIP_BL_FLASH" ]; then
     bootargs="\$bootargs l4tflash.reboot-recovery"
 fi
