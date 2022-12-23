@@ -75,7 +75,7 @@ if [ -z "$buspath" ]; then
 	buspath=$(find_jetson)
     done
     if [ -n "$buspath" ]; then
-	if [ -n "$opt_wait" ]; then
+	if [ -n "$opt_wait" -a "$message" = "." ]; then
 	    echo "[found: $buspath]"
 	else
 	    echo "Found Jetson at $buspath"
@@ -96,7 +96,7 @@ else
 	rc=$?
     done
     if [ $rc -eq 0 ]; then
-	if [ -n "$opt_wait" ]; then
+	if [ -n "$opt_wait" -a "$message" = "." ]; then
 	    echo "[found]"
 	else
 	    echo "Found Jetson at $buspath"
