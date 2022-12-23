@@ -8,6 +8,7 @@ spi_only=
 external_device=0
 sdcard=
 no_flash=0
+to_sign=0
 flash_cmd=
 imgfile=
 dataimg=
@@ -27,7 +28,7 @@ cp2local() {
     :
 }
 
-ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sdcard,spi-only,boot-only,external-device,rcm-boot,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
+ARGS=$(getopt -n $(basename "$0") -l "bup,no-flash,sign,sdcard,spi-only,boot-only,external-device,rcm-boot,datafile:,usb-instance:,user_key:" -o "u:v:s:b:B:yc:" -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error parsing options" >&2
     exit 1
@@ -44,6 +45,10 @@ while true; do
         ;;
     --no-flash)
         no_flash=1
+        shift
+        ;;
+    --sign)
+        to_sign=1
         shift
         ;;
     --sdcard)
@@ -153,8 +158,10 @@ cvm_bin=$(mktemp cvm.bin.XXXXX)
 
 skipuid=""
 bootauth=""
+BR_CID=
 if [ -z "$CHIPREV" -o -z "$fuselevel" ]; then
-    chipid=$($here/tegrarcm_v2 --new_session --chip 0x23 ${inst_args} --uid | grep BR_CID | cut -d' ' -f2)
+    BR_CID=$($here/tegrarcm_v2 --new_session --chip 0x23 ${inst_args} --uid | grep BR_CID | cut -d' ' -f2)
+    chipid="$BR_CID"
     if [ -z "$chipid" ]; then
         echo "ERR: could not retrieve chip ID" >&2
         exit 1
@@ -214,13 +221,14 @@ else
     skipuid="--skipuid"
 fi
 
+have_boardinfo=
 if [ -z "$FAB" -o -z "$BOARDID" ]; then
     if [ "$fuselevel" = "fuselevel_production" ]; then
         sed -i "s/preprod_dev_sign = <1>/preprod_dev_sign = <0>/" "${EMC_FUSE_DEV_PARAMS}";
     fi
     keyargs=
-    [ -z "$keyfile" ] || keyargs="$keyargs --key \"$keyfile\""
-    [ -z "$sbk_keyfile" ] || keyargs="$keyargs --encrypt_key \"$sbk_keyfile\""
+    [ -z "$keyfile" ] || keyargs="$keyargs --key $keyfile"
+    [ -z "$sbk_keyfile" ] || keyargs="$keyargs --encrypt_key $sbk_keyfile"
     rm -f rcm_state
     if ! python3 $flashappname ${inst_args} --chip 0x23 $skipuid $keyargs \
          --applet mb1_t234_prod.bin \
@@ -243,6 +251,7 @@ if [ -z "$FAB" -o -z "$BOARDID" ]; then
     # ramcode_id=$($here/chkbdinfo -R chip_info.bin_bak)
     # -XXX
     skipuid=""
+    have_boardinfo="yes"
 fi
 
 if [ -z "$CHIP_SKU" ]; then
@@ -264,17 +273,17 @@ else
 fi
 if [ -n "$BOARDSKU" ]; then
     board_sku="$BOARDSKU"
-else
+elif [ -n "$have_boardinfo" ]; then
     board_sku=`$here/chkbdinfo -k ${cvm_bin} | tr -d '[:space:]' | tr [a-z] [A-Z]`
     BOARDSKU="$board_sku"
 fi
 if [ -n "$BOARDREV" ]; then
     board_revision="$BOARDREV"
-else
+elif [ -n "$have_boardinfo" ]; then
     board_revision=`$here/chkbdinfo -r ${cvm_bin} | tr -d '[:space:]' | tr [a-z] [A-Z]`
     BOARDREV="$board_revision"
 fi
-if [ -z "$serial_number" ]; then
+if [ -z "$serial_number" -a -n "$have_boardinfo" ]; then
     serial_number=$($here/chkbdinfo -a ${cvm_bin} | tr -d '[:space:]')
 fi
 
@@ -283,7 +292,7 @@ fi
 [ -n "$BOARDID" ] || BOARDID=3701
 [ -n "$FAB" ] || FAB=TS4
 [ -n "$fuselevel" ] || fuselevel=fuselevel_production
-[ -n "${BOOTDEV}" ] || BOOTDEV="mmcblk0p1"
+[ -n "$BOOTDEV" ] || BOOTDEV="mmcblk0p1"
 
 rm -f boardvars.sh
 cat >boardvars.sh <<EOF
@@ -295,6 +304,7 @@ CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
 serial_number="$serial_number"
 usb_instance="$usb_instance"
+BR_CID="$BR_CID"
 EOF
 
 if [ "$BOARDID" = "3701" -a "$FAB" = "301" ]; then
@@ -366,11 +376,13 @@ if [ $bup_blob -ne 0 -o $rcm_boot -ne 0 ]; then
     appfile_sed="-e/APPFILE/d -e/DATAFILE/d"
 elif [ $no_flash -eq 0 -a -z "$sdcard" -a $external_device -eq 0 ]; then
     appfile_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile, -es,DATAFILE,$datafile,"
+elif [ $no_flash -ne 0 ]; then
+    touch APPFILE APPFILE_b DATAFILE
 else
     pre_sdcard_sed="-es,APPFILE_b,$appfile, -es,APPFILE,$appfile,"
     if [ -n "$datafile" ]; then
-    pre_sdcard_sed="$pre_sdcard_sed -es,DATAFILE,$datafile,"
-    touch DATAFILE
+	pre_sdcard_sed="$pre_sdcard_sed -es,DATAFILE,$datafile,"
+	touch DATAFILE
     fi
     touch APPFILE APPFILE_b
 fi
@@ -439,7 +451,7 @@ bctargs="$UPHY_CONFIG $MINRATCHET_CONFIG \
          --cpubl uefi_jetson.bin \
          --overlay_dtb $OVERLAY_DTB_FILE $custinfo_args"
 
-if [ $bup_blob -ne 0 -o "$sdcard" = "yes" -o $external_device -eq 1 -o $no_flash -eq 1 ]; then
+if [ $bup_blob -ne 0 -o $to_sign -ne 0 -o "$sdcard" = "yes" -o $external_device -eq 1 ]; then
     tfcmd=sign
     skipuid="--skipuid"
 elif [ $rcm_boot -ne 0 ]; then
@@ -459,7 +471,7 @@ else
 fi
 
 temp_user_dir=
-if [ -n "$keyfile" -o $rcm_boot -eq 1 ]; then
+if [ -n "$keyfile" ] || [ $rcm_boot -eq 1 ] || [ $no_flash -eq 1 -a $to_sign -eq 1 ]; then
     if [ -n "$sbk_keyfile" ]; then
         if [ -z "$user_keyfile" ]; then
             rm -f "null_user_key.txt"
@@ -519,10 +531,10 @@ if [ -n "$keyfile" -o $rcm_boot -eq 1 ]; then
     bctfile1name=`echo $sdramcfg_files | cut -d, -f2`
     SOSARGS="--applet mb1_t234_prod.bin "
     NV_ARGS=" "
-    BCTARGS="$bctargs"
+    BCTARGS="$bctargs --boot_chain A --bct_backup --secondary_gpt_backup"
     rootfs_ab=0
     . "$here/odmsign.func"
-    (odmsign_ext) || exit 1
+    (odmsign_ext_sign_and_flash) || exit 1
     if [ $bup_blob -eq 0 -a $no_flash -ne 0 ]; then
         if [ -f flashcmd.txt ]; then
             chmod +x flashcmd.txt
@@ -570,6 +582,18 @@ if [ $bup_blob -ne 0 ]; then
         exit 1
     fi
     l4t_bup_gen "$flashcmd" "$spec" "$fuselevel" t186ref "$keyfile" "$sbk_keyfile" 0x23 || exit 1
+    exit 0
+fi
+
+if [ $to_sign -ne 0 ]; then
+    eval $flashcmd < /dev/null || exit 1
+    exit 0
+fi
+
+if [ $no_flash -ne 0 ]; then
+    echo "$flashcmd" | sed -e 's,--skipuid,,g' > flashcmd.txt
+    chmod +x flashcmd.txt
+    rm -f APPFILE APPFILE_b DATAFILE null_user_key.txt
 else
     eval $flashcmd < /dev/null || exit 1
     if [ -n "$sdcard" -o $external_device -eq 1 ]; then
