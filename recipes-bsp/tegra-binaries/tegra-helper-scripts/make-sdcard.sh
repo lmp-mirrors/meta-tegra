@@ -67,6 +67,10 @@ compute_size() {
 find_finalpart() {
     local blksize partnumber partname partsize partfile partguid parttype partfilltoend
     local appidx pline i
+    if [ -n "$ignore_finalpart" ]; then
+	FINALPART=999
+	return 0
+    fi
     i=0
     for pline in "${PARTS[@]}"; do
 	eval "$pline"
@@ -100,13 +104,15 @@ make_partitions() {
 	fi
 	i=$(expr $i + 1)
     done
-    eval "${PARTS[$FINALPART]}"
-    [ -n "$parttype" ] || parttype="8300"
-    echo -n "$partname..."
-    if [ $partfilltoend -eq 1 ]; then
-	sgdisk "$output" -a 8 --largest-new=$partnumber --typecode=$partnumber:$parttype -c $partnumber:$partname >/dev/null 2>&1
-    else
-	sgdisk "$output" -a 8 --new=$partnumber:0:+$partsize --typecode=$partnumber:$parttype -c $partnumber:$partname >/dev/null 2>&1
+    if [ -z "$ignore_finalpart" ]; then
+	eval "${PARTS[$FINALPART]}"
+	[ -n "$parttype" ] || parttype="8300"
+	echo -n "$partname..."
+	if [ $partfilltoend -eq 1 ]; then
+	    sgdisk "$output" -a 8 --largest-new=$partnumber --typecode=$partnumber:$parttype -c $partnumber:$partname >/dev/null 2>&1
+	else
+	    sgdisk "$output" -a 8 --new=$partnumber:0:+$partsize --typecode=$partnumber:$parttype -c $partnumber:$partname >/dev/null 2>&1
+	fi
     fi
 }
 
@@ -159,6 +165,9 @@ write_partitions_to_device() {
 	fi
 	i=$(expr $i + 1)
     done
+    if [ -n "$ignore_finalpart" ]; then
+	return 0
+    fi
     eval "${PARTS[$FINALPART]}"
     if [ -n "$partfile" ]; then
 	if [ ! -e "$partfile" ]; then
@@ -226,7 +235,7 @@ confirm() {
     done
 }
 
-ARGS=$(getopt -l "serial-number:,keep-connection" -o "yhs:b:" -n "$me" -- "$@")
+ARGS=$(getopt -l "serial-number:,keep-connection,no-final-part" -o "yhs:b:" -n "$me" -- "$@")
 if [ $? -ne 0 ]; then
     usage
     exit 1
@@ -241,6 +250,7 @@ basename=
 wait_for_usb_device=
 keep_connection=
 serial_number=
+ignore_finalpart=
 while true; do
     case "$1" in
 	--serial-number)
@@ -250,6 +260,10 @@ while true; do
 	    ;;
 	--keep-connection)
 	    keep_connection=yes
+	    shift
+	    ;;
+	--no-final-part)
+	    ignore_finalpart=yes
 	    shift
 	    ;;
 	-h)
