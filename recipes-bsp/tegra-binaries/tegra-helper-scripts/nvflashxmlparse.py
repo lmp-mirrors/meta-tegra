@@ -5,10 +5,13 @@ import sys
 import argparse
 import uuid
 import logging
+import xml.etree.ElementTree as ET
 
 uuids = {}
 ignore_partition_ids = False
 boot_devices = ["spi", "sdmmc_boot"]
+kernels_and_dtbs = ["kernel", "kernel_b", "kernel-dtb", "kernel-dtb_b",
+                    "recovery", "RECNAME", "recovery-dtb", "RECDTB-NAME"]
 
 def generate_guid(guid):
     global uuids
@@ -126,7 +129,6 @@ class Device(object):
 
 class PartitionLayout(object):
     def __init__(self, configfile):
-        import xml.etree.ElementTree as ET
         tree = ET.parse(configfile)
         root = tree.getroot()
         if root.tag != 'partition_layout':
@@ -146,7 +148,6 @@ class PartitionLayout(object):
 
 
 def extract_layout(infile, devtype, outf, new_devtype=None, sector_count=0):
-    import xml.etree.ElementTree as ET
     tree = ET.parse(infile)
     root = tree.getroot()
     for dev in root.findall('device'):
@@ -168,9 +169,11 @@ def extract_layout(infile, devtype, outf, new_devtype=None, sector_count=0):
 
 
 def split_layout(infile, mmcf, sdcardf, new_devtype=None, sector_count=0):
-    import xml.etree.ElementTree as ET
-    sdcard_parts = ['APP', 'APP_b', 'UDA', 'kernel', 'kernel_b', 'kernel-dtb', 'kernel-dtb_b',
-                    'recovery', 'recovery-dtb', 'RECROOTFS', 'esp']
+    if new_devtype is None:
+        new_devtype = "sdcard"
+    sdcard_parts = ['APP', 'APP_b', 'UDA', 'RECROOTFS', 'esp']
+    if new_devtype == "sdcard":
+        sdcard_parts += kernels_and_dtbs
     mmctree = ET.parse(infile)
     sdcardtree = ET.parse(infile)
     root = mmctree.getroot()
@@ -199,6 +202,54 @@ def split_layout(infile, mmcf, sdcardf, new_devtype=None, sector_count=0):
     sdcardtree.write(sdcardf, encoding='unicode', xml_declaration=True)
     sdcardf.write("\n")
 
+
+def replace_filename(part, maptree):
+    for dev in maptree.findall('device'):
+        for mapnode in dev.findall('partition'):
+            if part.get('name') != mapnode.get('name'):
+                continue
+            filename = part.find('filename')
+            if filename is not None:
+                logging.info("Removed old filename for {}: {}".format(part.get('name'), filename.text))
+                part.remove(filename)
+            filename = mapnode.find('filename')
+            if filename is None:
+                logging.info("No replacement filename for partition {}".format(part.get('name')))
+                return
+            # Keep <description> element last, if there is one
+            if len(part) > 0 and part[len(part)-1].tag == 'description':
+                fnelem = ET.Element('filename')
+                fnelem.text = filename.text
+                part.insert(len(part)-1, fnelem)
+                logging.info("New filename element inserted for {}: {}".format(part.get('name'), fnelem.text))
+            else:
+                ET.SubElement(part, 'filename').text = filename.text
+                logging.info("New filename element appended for {}: {}".format(part.get('name'), part[len(part)-1].text))
+            return
+    logging.info("No rewrite applied for {}".format(part.get('name')))
+
+def rewrite_layout(infile, mapfile, outf):
+    intree = ET.parse(infile)
+    maptree = ET.parse(mapfile)
+    root = intree.getroot()
+    for dev in root.findall('device'):
+        for part in dev.findall('partition'):
+            replace_filename(part, maptree)
+    intree.write(outf, encoding='unicode', xml_declaration=True)
+    outf.write("\n")
+
+def remove_from_layout(infile, to_remove, outf):
+    intree = ET.parse(infile)
+    root = intree.getroot()
+    if not to_remove:
+        to_remove = kernels_and_dtbs
+    for dev in root.findall('device'):
+        for part in dev.findall('partition'):
+            if part.get('name') in to_remove:
+                logging.info("Removing {} from {}".format(part.get('name'), dev.get('type')))
+                dev.remove(part)
+    intree.write(outf, encoding='unicode', xml_declaration=True)
+    outf.write("\n")
 
 def size_to_sectors(sizespec):
     suffix = sizespec[-1:]
@@ -231,14 +282,18 @@ def main():
         ignore_partition_ids = ignore_from_env != "" and ignore_from_env in ['Y', 'YES', 'T', 'TRUE', '1']
     parser = argparse.ArgumentParser(
         description="""
-Extracts partition information from an NVIDIA flash.xml file
+Extracts/manipulates partition information in an NVIDIA flash layout XML file
 """)
     parser.add_argument('-t', '--type', help='device type to extract information for, must either match a <device> tag or the generic "boot" or "rootfs" names', action='store')
-    parser.add_argument('-l', '--list-types', help='list the device types described in the file', action='store_true')
-    parser.add_argument('-b', '--boot-device', help='print the device type holding boot partitions', action='store_true')
-    parser.add_argument('-e', '--extract', help='generate a new XML file extracting just the specified device type', action='store_true')
+    cmdgroup = parser.add_mutually_exclusive_group()
+    cmdgroup.add_argument('-l', '--list-types', help='list the device types described in the file', action='store_true')
+    cmdgroup.add_argument('-b', '--boot-device', help='print the device type holding boot partitions', action='store_true')
+    cmdgroup.add_argument('-e', '--extract', help='generate a new XML file extracting just the specified device type', action='store_true')
+    cmdgroup.add_argument('--rewrite-contents-from', help='rewrite the <filename> entries in the output XML with the entries in the specified layout', action='store')
+    cmdgroup.add_argument('-s', '--split', help='XML output file for MMC-SDcard/external split on Jetson AGX Xavier', action='store')
+    cmdgroup.add_argument('--remove', help='Remove partitions from the XML layout', action='store_true')
     parser.add_argument('--change-device-type', help='(for use with --split or --extract) change the <device> tag type attribute to the specifed value', action='store')
-    parser.add_argument('-s', '--split', help='XML output file for MMC-SDcard/external split on Jetson AGX Xavier', action='store')
+    parser.add_argument('--partitions-to-remove', help='(for use with --remove) list of partitions to remove', action='store')
     parser.add_argument('-S', '--sdcard-size', '--storage-size', help='storage size for use with --split or --extract', action='store', default="0")
     parser.add_argument('-o', '--output', help='file to write output to', action='store')
     parser.add_argument('-v', '--verbose', help='verbose logging', action='store_true')
@@ -246,6 +301,28 @@ Extracts partition information from an NVIDIA flash.xml file
 
     args = parser.parse_args()
     logging.basicConfig(format='%(message)s', level=logging.INFO if args.verbose else logging.WARNING)
+
+    if args.split or args.rewrite_contents_from or args.extract or args.remove:
+        if args.output:
+            outf = open(args.output, "w")
+        else:
+            outf = sys.stdout
+        if args.split:
+            sdcardf = open(args.split, "w")
+            split_layout(args.filename, outf, sdcardf, args.change_device_type, size_to_sectors(args.sdcard_size))
+            return 0
+        if args.rewrite_contents_from:
+            rewrite_layout(args.filename, args.rewrite_contents_from, outf)
+            return 0
+        if args.extract:
+            extract_layout(args.filename, args.type, outf, args.change_device_type, size_to_sectors(args.sdcard_size))
+            return 0
+        if args.remove:
+            remove_from_layout(args.filename, args.partitions_to_remove, outf)
+            return 0
+        print("Internal error dispatching to XML transformation function", file=sys.stderr)
+        return 1
+
     layout = PartitionLayout(args.filename)
     if args.list_types:
         print("Device types:\n{}".format('\n'.join(['    ' + t for t in layout.devtypes])))
@@ -257,14 +334,6 @@ Extracts partition information from an NVIDIA flash.xml file
                 return 0
         print("No boot device found in {}".format(args.filename), file=sys.stderr)
         return 1
-    if args.split:
-        sdcardf = open(args.split, "w")
-        if args.output:
-            outf = open(args.output, "w")
-        else:
-            outf = sys.stdout
-        split_layout(args.filename, outf, sdcardf, args.change_device_type, size_to_sectors(args.sdcard_size))
-        return 0
 
     if not args.type:
         if layout.device_count > 1:
@@ -292,23 +361,20 @@ Extracts partition information from an NVIDIA flash.xml file
     else:
         outf = sys.stdout
 
-    if args.extract:
-        extract_layout(args.filename, args.type, outf, args.change_device_type, size_to_sectors(args.sdcard_size))
-    else:
-        partitions = [part for part in layout.devices[args.type].partitions if not part.is_partition_table()]
-        blksize = layout.devices[args.type].sector_size
-        for n, part in enumerate(partitions):
-            print("blksize={};partnumber={};partname=\"{}\";start_location={};partsize={};"
-                  "partfile=\"{}\";partguid=\"{}\";parttype=\"{}\";partfilltoend={}".format(blksize,
-                                                                                            part.id,
-                                                                                            part.name,
-                                                                                            part.start_location,
-                                                                                            part.size,
-                                                                                            part.filename,
-                                                                                            part.partguid,
-                                                                                            part.parttype,
-                                                                                            1 if part.filltoend() else 0),
-                  file=outf)
+    partitions = [part for part in layout.devices[args.type].partitions if not part.is_partition_table()]
+    blksize = layout.devices[args.type].sector_size
+    for n, part in enumerate(partitions):
+        print("blksize={};partnumber={};partname=\"{}\";start_location={};partsize={};"
+              "partfile=\"{}\";partguid=\"{}\";parttype=\"{}\";partfilltoend={}".format(blksize,
+                                                                                        part.id,
+                                                                                        part.name,
+                                                                                        part.start_location,
+                                                                                        part.size,
+                                                                                        part.filename,
+                                                                                        part.partguid,
+                                                                                        part.parttype,
+                                                                                        1 if part.filltoend() else 0),
+              file=outf)
     outf.close()
 
 if __name__ == '__main__':
