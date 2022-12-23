@@ -38,7 +38,7 @@ functions :
 		    ro = false;
 		    nofua = false;
 		    removable = true;
-		    file = "@ROOTFS_DEVICE@";
+		    file = "@STORAGE_EXPORT@";
 		});
         };
         os_descs = ( );
