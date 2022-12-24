@@ -257,8 +257,10 @@ CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
 serial_number="$serial_number"
 usb_instance="$usb_instance"
-BR_CID="$BR_CID"
 EOF
+if [ -n "$BR_CID" ]; then
+    echo "BR_CID=\"$BR_CID\"" >>boardvars.sh
+fi
 
 # Adapted from p2972-0000.conf.common in L4T kit
 TOREV="a01"
@@ -393,6 +395,13 @@ tos tos-optee_t194.img; \
 eks eks.img; \
 bootloader_dtb $dtb_file"
 
+have_odmsign_func=0
+[ ! -e "$here/odmsign.func" ] || have_odmsign_func=1
+if [ -n "$keyfile" -o -n "$sbk_keyfile" -o -n "$user_keyfile" ] && [ $have_odmsign_func -eq 0 ]; then
+    echo "ERR: missing odmsign.func from secureboot package, signing not supported" >&2
+    exit 1
+fi
+
 if [ $rcm_boot -ne 0 ]; then
     BINSARGS="$BINSARGS; kernel $kernfile; kernel_dtb $kernel_dtbfile"
 fi
@@ -433,7 +442,11 @@ else
 fi
 
 temp_user_dir=
+want_signing=0
 if [ -n "$keyfile" ] || [ $rcm_boot -eq 1 ] || [ $no_flash -eq 1 -a $to_sign -eq 1 ]; then
+    want_signing=1
+fi
+if [ $have_odmsign_func -eq 1 -a $want_signing -eq 1 ]; then
     if [ -n "$sbk_keyfile" ]; then
 	if [ -z "$user_keyfile" ]; then
 	    rm -f "null_user_key.txt"

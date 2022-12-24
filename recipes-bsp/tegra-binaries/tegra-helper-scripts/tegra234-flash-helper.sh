@@ -148,6 +148,13 @@ if [ -z "$FLASHVARS" ]; then
     exit 1
 fi
 
+have_odmsign_func=0
+[ ! -e "$here/odmsign.func" ] || have_odmsign_func=1
+if [ -n "$keyfile" -o -n "$sbk_keyfile" -o -n "$user_keyfile" ] && [ $have_odmsign_func -eq 0 ]; then
+    echo "ERR: missing odmsign.func from secureboot package, signing not supported" >&2
+    exit 1
+fi
+
 if [ $rcm_boot -eq 1 ]; then
     OVERLAY_DTB_FILE=$(echo "$OVERLAY_DTB_FILE" | sed -e's!BootOrder[^.]*\.dtbo\(,\|$\)!!')
 fi
@@ -304,8 +311,10 @@ CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
 serial_number="$serial_number"
 usb_instance="$usb_instance"
-BR_CID="$BR_CID"
 EOF
+if [ -n "$BR_CID" ]; then
+    echo "BR_CID=\"$BR_CID\"" >>boardvars.sh
+fi
 
 if [ "$BOARDID" = "3701" -a "$FAB" = "301" ]; then
     RAMCODE=0
@@ -421,7 +430,7 @@ sce_fw camera-rtcpu-sce.img; \
 rce_fw camera-rtcpu-t234-rce.img; \
 ape_fw adsp-fw.bin; \
 spe_fw spe_t234.bin; \
-tlk tos-optee_t234.img; \
+tos tos-optee_t234.img; \
 eks eks.img"
 
 if [ $rcm_boot -ne 0 ]; then
@@ -471,7 +480,11 @@ else
 fi
 
 temp_user_dir=
+want_signing=0
 if [ -n "$keyfile" ] || [ $rcm_boot -eq 1 ] || [ $no_flash -eq 1 -a $to_sign -eq 1 ]; then
+    want_signing=1
+fi
+if [ $have_odmsign_func -eq 1 -a $want_signing -eq 1 ]; then
     if [ -n "$sbk_keyfile" ]; then
         if [ -z "$user_keyfile" ]; then
             rm -f "null_user_key.txt"
@@ -555,7 +568,7 @@ if [ -n "$keyfile" ] || [ $rcm_boot -eq 1 ] || [ $no_flash -eq 1 -a $to_sign -eq
 fi
 
 flashcmd="python3 $flashappname ${inst_args} --chip 0x23 --bl uefi_jetson_with_dtb.bin \
-          --sdram_config $sdramcfg_files
+          --sdram_config $sdramcfg_files \
           --odmdata $odmdata \
           --applet mb1_t234_prod.bin \
           --cmd \"$tfcmd\" $skipuid \
