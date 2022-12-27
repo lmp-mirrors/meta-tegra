@@ -63,7 +63,7 @@ find_buspath() {
     fi
     check_jetson "$usbpath"
 }
-    
+
 buspath="$1"
 if [ -z "$buspath" ]; then
     buspath=$(find_jetson)
@@ -78,11 +78,12 @@ if [ -z "$buspath" ]; then
 	if [ -n "$opt_wait" -a "$message" = "." ]; then
 	    echo "[found: $buspath]"
 	else
-	    echo "Found Jetson at $buspath"
+	    echo "Found Jetson device in recovery mode at USB $buspath"
 	fi
+	echo "usb_instance=$buspath" > .found-jetson
 	exit 0
     fi
-    echo "ERR: Jetson not found" >&2
+    echo "ERR: No Jetson device in recovery mode found on USB" >&2
     exit 1
 else
     find_buspath "$buspath"
@@ -99,10 +100,10 @@ else
 	if [ -n "$opt_wait" -a "$message" = "." ]; then
 	    echo "[found]"
 	else
-	    echo "Found Jetson at $buspath"
+	    echo "Found Jetson device in recovery mode at USB $buspath"
 	fi
 	exit 0
     fi
-    echo "ERR: No Jetson found at $buspath" >&2
+    echo "ERR: No Jetson device in recovery mode found at USB $buspath" >&2
     exit 1
 fi
