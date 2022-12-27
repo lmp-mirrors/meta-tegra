@@ -6,11 +6,11 @@ mount -t sysfs sysfs -o nosuid,nodev,noexec /sys
 mount -t configfs configfs -o nosuid,nodev,noexec /sys/kernel/config
 
 [ ! /usr/sbin/wd_keepalive ] || /usr/sbin/wd_keepalive &
-[ -d /run/usbgx ] || mkdir /run/usbgx
+
 sernum=$(cat /sys/devices/platform/efuse-burn/ecid 2>/dev/null)
 [ -n "$sernum" ] || sernum=$(cat /sys/module/tegra_fuse/tegra_chip_uid 2>/dev/null)
 if [ -n "$sernum" ]; then
-    # Restricted to 8 characters for the ID_VENDOR tag
+    # Restricted to 8 characters for the ID_MODEL tag
     sernum=$(printf "%x" "$sernum" | tail -c8)
 fi
 [ -n "$sernum" ] || sernum="UNKNOWN"
@@ -47,15 +47,16 @@ setup_usb_export() {
     if [ -e /sys/kernel/config/usb_gadget/l4t ]; then
 	gadget-vid-pid-remove 1d6b:104
     fi
-    sed -e"s,@SERIALNUMBER@,$sernum," -e"s,@STORAGE_EXPORT@,$storage_export," /usr/share/usbgx/l4t-initrd-flashing.schema.in > /run/usbgx/l4t.schema
-    chmod 0644 /run/usbgx/l4t.schema
-    gadget-import l4t /run/usbgx/l4t.schema
+    sed -e"s,@SERIALNUMBER@,$sernum," -e"s,@STORAGE_EXPORT@,$storage_export," /etc/initrd-flash/initrd-flash.scheme.in > /run/initrd-flash.scheme
+    chmod 0644 /run/initrd-flash.scheme
+    gadget-import l4t /run/initrd-flash.scheme
     printf "%-8s%-16s" "$export_name" "$sernum" > /sys/kernel/config/usb_gadget/l4t/functions/mass_storage.l4t_storage/lun.0/inquiry_string
     echo "$UDC" > /sys/kernel/config/usb_gadget/l4t/UDC
     if [ -e /sys/class/usb_role/usb2-0-role-switch/role ]; then
 	echo "device" > /sys/class/usb_role/usb2-0-role-switch/role
     fi
     echo "Exported $storage_export as $export_name"
+    return 0
 }
 
 wait_for_connect() {
@@ -75,6 +76,7 @@ wait_for_connect() {
 	    count=0
 	fi
     done
+    return 0
 }
 
 wait_for_disconnect() {
@@ -95,85 +97,114 @@ wait_for_disconnect() {
 	fi
     done
     echo "" > /sys/kernel/config/usb_gadget/l4t/UDC
+    return 0
 }
 
 get_flash_package() {
-    rm -rf /tmp/blpkg_tree
-    mkdir -p /tmp/blpkg_tree/flashpkg/logs
-    chmod 777 /tmp/blpkg_tree/flashpkg
-    echo "PENDING: expecting command sequence from host" > /tmp/blpkg_tree/flashpkg/status
-    dd if=/dev/zero of=/tmp/blpkg.ext4 bs=1M count=128
-    mke2fs -t ext4 -d /tmp/blpkg_tree /tmp/blpkg.ext4
-    setup_usb_export /tmp/blpkg.ext4 blpkg || return 1
+    rm -rf /tmp/flashpkg_tree
+    mkdir -p /tmp/flashpkg_tree/flashpkg/logs
+    # Top of mount point on host will only be writable by root, so
+    # create a world-writable subdirectory so a user can send us
+    # the commands and content.
+    chmod 777 /tmp/flashpkg_tree/flashpkg
+    echo "PENDING: expecting command sequence from host" > /tmp/flashpkg_tree/flashpkg/status
+    dd if=/dev/zero of=/tmp/flashpkg.ext4 bs=1M count=128 > /dev/null || return 1
+    mke2fs -t ext4 -d /tmp/flashpkg_tree /tmp/flashpkg.ext4 > /dev/null || return 1
+    setup_usb_export /tmp/flashpkg.ext4 flashpkg || return 1
     wait_for_connect || return 1
     wait_for_disconnect || return 1
+    return 0
 }
 
 process_bootloader_package() {
-    program-boot-device /tmp/blpkg/flashpkg/bootloader
+    rm -f /run/bootloader-status
+    if program-boot-device /tmp/flashpkg/flashpkg/bootloader; then
+	echo "SUCCESS" > /run/bootloader-status
+    else
+	echo "FAILED" > /run/bootloader-status
+    fi
 }
 
 
+skip_status_report=
+reboot_type=
+final_status="FAILED"
+wait_for_bootloader=
+
 if ! get_flash_package; then
-    exec sh
-fi
-
-mkdir -p /tmp/blpkg
-mount -t ext4 /tmp/blpkg.ext4 /tmp/blpkg
-
-if [ ! -e /tmp/blpkg/flashpkg/conf/command_sequence ]; then
-    echo "No command sequence in flash package, nothing to do"
-    commands_to_run="reboot"
+    echo "Error retrieving flashing package" >&2
+    skip_status_report=yes
 else
-    commands_to_run=$(cat /tmp/blpkg/flashpkg/conf/command_sequence)
+    mkdir -p /tmp/flashpkg
+    mount -t ext4 /tmp/flashpkg.ext4 /tmp/flashpkg
 fi
-PIDS=
-while [ -n "$commands_to_run" ]; do
-    this_command=$(echo "$commands_to_run" | cut -d';' -f 1)
-    trimlen=$(expr ${#this_command} \+ 2)
-    commands_to_run=$(echo "${commands_to_run}" | tail -c +$trimlen)
-    cmd=$(echo "$this_command" | cut -d' ' -f 1)
-    cmdlen=$(expr ${#cmd} \+ 1)
-    args=$(echo "${this_command}" | tail -c +$cmdlen | sed -e's,^[[:space:]]*,,')
-    case "$cmd" in
-	bootloader)
-	    process_bootloader_package 2>&1 > /tmp/blpkg/flashpkg/logs/bootloader.log &
-	    PIDS="$PIDS $!"
-	    ;;
-	erase-mmc)
-	    if [ -b /dev/mmcblk0 ]; then
-		blkdiscard -f /dev/mmcblk0 2>&1 > /tmp/blpkg/flashpkg/logs/erase-mmc.log
-	    else
-		echo "/dev/mmcblk0 does not exist, skipping" > /tmp/blpkg/flashpkg/logs/erase-mmc.log
-	    fi
-	    ;;
-	export-devices)
-	    for dev in $args; do
-		setup_usb_export /dev/$dev $dev 2>&1 > /tmp/blpkg/flashpkg/logs/export-$dev.log
-		wait_for_connect 2>&1 >> /tmp/blpkg/flashpkg/logs/export-$dev.log
-		wait_for_disconnect 2>&1 >> /tmp/blpkg/flashpkg/logs/export-$dev.log
-	    done
-	    ;;
-	reboot)
-	    if [ -n "$PIDS" ]; then
-		echo "Waiting for background jobs to finish..."
-		wait $PIDS
-	    fi
-	    echo "COMPLETE: reboot $args" > /tmp/blpkg/flashpkg/status
-	    umount /tmp/blpkg && setup_usb_export /tmp/blpkg.ext4 blpkg && wait_for_connect && wait_for_disconnect
 
-	    if [ "$args" = "forced-recovery" ]; then
-		reboot-recovery
-	    else
-		reboot -f
-	    fi
-	    ;;
-	*)
-	    echo "Unrecognized command: $cmd $args" >&2
-	    ;;
-    esac
+if [ ! -e /tmp/flashpkg/flashpkg/conf/command_sequence ]; then
+    echo "No command sequence in flash package, nothing to do"
+else
+    exit_early=
+    while read cmd args; do
+	[ -z "$exit_early" ] || break
+	echo "Processing: $cmd $args"
+	case "$cmd" in
+	    bootloader)
+		process_bootloader_package 2>&1 > /tmp/flashpkg/flashpkg/logs/bootloader.log &
+		wait_for_bootloader=yes
+		;;
+	    erase-mmc)
+		if [ -b /dev/mmcblk0 ]; then
+		    blkdiscard -f /dev/mmcblk0 2>&1 > /tmp/flashpkg/flashpkg/logs/erase-mmc.log
+		else
+		    echo "/dev/mmcblk0 does not exist, skipping" > /tmp/flashpkg/flashpkg/logs/erase-mmc.log
+		fi
+		;;
+	    export-devices)
+		for dev in $args; do
+		    if setup_usb_export /dev/$dev $dev 2>&1 > /tmp/flashpkg/flashpkg/logs/export-$dev.log; then
+			if wait_for_connect 2>&1 >> /tmp/flashpkg/flashpkg/logs/export-$dev.log; then
+			    if wait_for_disconnect 2>&1 >> /tmp/flashpkg/flashpkg/logs/export-$dev.log; then
+				continue
+			    fi
+			fi
+		    fi
+		    echo "Export of $dev failed" >&2
+		    exit_early=yes
+		    break
+		done
+		;;
+	    reboot)
+		reboot_type="$args"
+		final_status="SUCCESS"
+		# reboot command is expected to be the last in the sequence, if present
+		break
+		;;
+	    *)
+		echo "Unrecognized command: $cmd $args" > /tmp/flashpkg/flashpkg/logs/commandloop.log
+		exit_early="yes"
+		;;
+	esac
+    done < /tmp/flashpkg/flashpkg/conf/command_sequence
+fi
 
-done
+if [ -n "$wait_for_bootloader" ]; then
+    message="Waiting for boot device programming to complete..."
+    while [ ! -e /run/bootloader-status ]; do
+	echo -n "$message"
+	message="."
+	sleep 1
+    done
+    blstatus=$(cat /run/bootloader-status)
+    if [ "$blstatus" = "FAILED" ]; then
+       final_status="FAILED"
+    fi
+fi
+echo "$final_status" > /tmp/flashpkg/flashpkg/status
+if [ -z "$skip_status_report" ]; then
+    umount /tmp/flashpkg && setup_usb_export /tmp/flashpkg.ext4 flashpkg && wait_for_connect && wait_for_disconnect
+fi
 
-# Should never break out of the above loop
-exec sh
+if [ "$reboot_type" = "forced-recovery" ]; then
+    reboot-recovery
+else
+    reboot -f
+fi
