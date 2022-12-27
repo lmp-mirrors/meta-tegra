@@ -12,6 +12,11 @@ def tegra_default_rootfs_size(d):
 def tegra_rootfs_device(d):
     import re
     bootdev = d.getVar('TNSPEC_BOOTDEV')
+    # For Xavier NX booting from SDcard, the RCM booted kernel
+    # bypasses UEFI and doesn't get any overlays applied, such
+    # as the one that renames mmcblk1 -> mmcblk0
+    if bootdev.startswith("mmc") and d.getVar('TEGRA_SPIFLASH_BOOT') == "1":
+        return "mmcblk1"
     if bootdev.startswith("mmc") or bootdev.startswith("nvme"):
         return re.sub(r"p[0-9]+$", "", bootdev)
     return re.sub("[0-9]+$", "", bootdev)
@@ -39,7 +44,7 @@ RECROOTFSSIZE ?= "314572800"
 IMAGE_TEGRAFLASH_FS_TYPE ??= "ext4"
 IMAGE_TEGRAFLASH_ROOTFS ?= "${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.${IMAGE_TEGRAFLASH_FS_TYPE}"
 TEGRAFLASH_ROOTFS_EXTERNAL = "${@'1' if d.getVar('TNSPEC_BOOTDEV') != 'mmcblk0p1' else '0'}"
-TNSPEC_ROOTFS_DEVICE = "${@tegra_rootfs_device(d)}"
+ROOTFS_DEVICE_FOR_INITRD_FLASH = "${@tegra_rootfs_device(d)}"
 TEGRAFLASH_ERASE_MMC ?= "${TEGRAFLASH_ROOTFS_EXTERNAL}"
 
 def tegra_initrd_image(d):
@@ -378,7 +383,7 @@ END
     cat > .env.initrd-flash <<END
 FLASH_HELPER=${SOC_FAMILY}-flash-helper.sh
 BOOTDEV="${TNSPEC_BOOTDEV}"
-ROOTFS_DEVICE="${TNSPEC_ROOTFS_DEVICE}"
+ROOTFS_DEVICE="${ROOTFS_DEVICE_FOR_INITRD_FLASH}"
 MACHINE="${TNSPEC_MACHINE}"
 DEFAULTS[BOARDID]="${TEGRA_BOARDID}"
 DEFAULTS[FAB]="${TEGRA_FAB}"
@@ -499,7 +504,7 @@ END
     cat > .env.initrd-flash <<END
 FLASH_HELPER=${SOC_FAMILY}-flash-helper.sh
 BOOTDEV="${TNSPEC_BOOTDEV}"
-ROOTFS_DEVICE="${TNSPEC_ROOTFS_DEVICE}"
+ROOTFS_DEVICE="${ROOTFS_DEVICE_FOR_INITRD_FLASH}"
 MACHINE="${TNSPEC_MACHINE}"
 DEFAULTS[BOARDID]="${TEGRA_BOARDID}"
 DEFAULTS[FAB]="${TEGRA_FAB}"
