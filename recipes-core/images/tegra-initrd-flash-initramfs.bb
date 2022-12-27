@@ -9,7 +9,6 @@ PACKAGE_INSTALL = "\
     tegra-firmware-xusb \
     tegra-flash-init \
     libusbgx \
-    tegra-redundant-boot \
     watchdog-keepalive \
     ${TEGRA_INITRD_FLASH_BASEUTILS} \
     ${ROOTFS_BOOTSTRAP_INSTALL} \
