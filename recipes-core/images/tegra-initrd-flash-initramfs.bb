@@ -8,8 +8,6 @@ TEGRA_INITRD_FLASH_BASEUTILS ?= "busybox"
 PACKAGE_INSTALL = "\
     tegra-firmware-xusb \
     tegra-flash-init \
-    libusbgx \
-    watchdog-keepalive \
     ${TEGRA_INITRD_FLASH_BASEUTILS} \
     ${ROOTFS_BOOTSTRAP_INSTALL} \
     ${TEGRA_INITRD_FLASH_INSTALL} \
@@ -22,8 +20,6 @@ COPY_LIC_MANIFEST = "0"
 COPY_LIC_DIRS = "0"
 
 COMPATIBLE_MACHINE = "(tegra)"
-
-#KERNELDEPMODDEPEND = ""
 
 IMAGE_ROOTFS_SIZE = "32768"
 IMAGE_ROOTFS_EXTRA_SPACE = "0"
