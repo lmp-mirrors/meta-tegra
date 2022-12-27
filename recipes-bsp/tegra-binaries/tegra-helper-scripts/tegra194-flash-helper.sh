@@ -66,10 +66,6 @@ while true; do
 	--external-device)
 	    external_device=1
 	    extdevargs="--external_device"
-	    if [ -z "$serial_number" ]; then
-		echo "ERR: missing serial_number environment variable for external device flashing" >&2
-		exit 1
-	    fi
 	    shift
 	    ;;
 	--datafile)
@@ -255,9 +251,13 @@ BOARDSKU="$BOARDSKU"
 BOARDREV="$BOARDREV"
 CHIPREV="$CHIPREV"
 fuselevel="$fuselevel"
-serial_number="$serial_number"
-usb_instance="$usb_instance"
 EOF
+if [ -n "$serial_number" ]; then
+    echo "serial_number=$serial_number" >>boardvars.sh
+fi
+if [ -n "$usb_instance" ]; then
+    echo "usb_instance=$usb_instance" >>boardvars.sh
+fi
 if [ -n "$BR_CID" ]; then
     echo "BR_CID=\"$BR_CID\"" >>boardvars.sh
 fi
@@ -511,7 +511,7 @@ if [ $have_odmsign_func -eq 1 -a $want_signing -eq 1 ]; then
     if [ -n "$added_mb2_applet" ]; then
 	mv flashcmd.txt flashcmd.txt.orig
 	"$here/rewrite-tegraflash-args" -o flashcmd.txt --bins mb2_applet= flashcmd.txt.orig
-	rm flashcmd.txt.org
+	rm flashcmd.txt.orig
     fi
     if [ $bup_blob -eq 0 -a $no_flash -ne 0 ]; then
 	if [ -f flashcmd.txt ]; then
