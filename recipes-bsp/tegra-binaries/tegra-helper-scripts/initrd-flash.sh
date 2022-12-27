@@ -1,15 +1,29 @@
 #!/bin/bash
 
+me=$(basename "$0")
 here=$(readlink -f $(dirname "$0"))
 
 declare -A DEFAULTS
 
 usage() {
     cat <<EOF
-Insert help text here
+Usage:
+  $me [options]
+
+Options:
+  -h|--help             Displays this usage information
+  --skip-bootloader     Skip boot partition programming
+  --usb-instance        USB instance of Jetson device
+
+Options passed through to flash helper:
+  -u                    PKC key file for signing
+  -v                    SBK key file for signing
+  --user_key            User key for signing
+
 EOF
 }
 
+# The build must generate these environment settings
 if [ ! -e .env.initrd-flash ]; then
     echo "Missing environment settings" >&2
     exit 1
@@ -17,7 +31,8 @@ fi
 
 . .env.initrd-flash
 
-
+# The .presigning-vars file is generated when binaries
+# are signed during the build
 PRESIGNED=
 if [ -e .presigning-vars ]; then
     . .presigning-vars
@@ -25,10 +40,12 @@ if [ -e .presigning-vars ]; then
 fi
 
 usb_instance=
+instance_args=
 user_keyfile=
 keyfile=
 sbk_keyfile=
 skip_bootloader=0
+early_final_status=0
 
 ARGS=$(getopt -n $(basename "$0") -l "usb-instance:,user_key:,help,skip-bootloader" -o "u:v:h" -- "$@")
 if [ $? -ne 0 ]; then
@@ -70,11 +87,15 @@ while true; do
 	    ;;
 	*)
 	    echo "Error processing options" >&2
+	    usage
 	    exit 1
 	    ;;
     esac
 done
 
+# When the secureboot package is not installed, we have
+# to handle signing/RCM booting a bit differently, due to
+# the way the NVIDIA flashing scripts work
 have_odmsign_func=0
 if [ -e "$here/odmsign.func" ]; then
     have_odmsign_func=1
@@ -127,47 +148,46 @@ sign_binaries() {
 	wait_for_rcm
     fi
     local flashin="flash.xml.in"
-    MACHINE=$MACHINE BOARDID=$BOARDID FAB=$FAB BOARDSKU=$BOARDSKU BOARDREV=$BOARDREV CHIPREV=$CHIPREV fuselevel=$fuselevel \
-	   "$here/$FLASH_HELPER" --no-flash --sign -u "$keyfile" -v "$sbk_keyfile" --user_key "$user_keyfile" \
-	   $flashin $DTBFILE $EMMC_BCTS $ODMDATA $LNXFILE $ROOTFS_IMAGE
-    if [ $have_odmsign_func -eq 0 ]; then
-	cp signed/flash.xml.tmp secureflash.xml
-	cp signed/flash.idx flash.idx
-	copy_signed_binaries
+    if MACHINE=$MACHINE BOARDID=$BOARDID FAB=$FAB BOARDSKU=$BOARDSKU BOARDREV=$BOARDREV CHIPREV=$CHIPREV fuselevel=$fuselevel \
+	      "$here/$FLASH_HELPER" --no-flash --sign -u "$keyfile" -v "$sbk_keyfile" --user_key "$user_keyfile" $instance_args \
+	      $flashin $DTBFILE $EMMC_BCTS $ODMDATA $LNXFILE $ROOTFS_IMAGE; then
+	if [ $have_odmsign_func -eq 0 ]; then
+	    cp signed/flash.xml.tmp secureflash.xml
+	    cp signed/flash.idx flash.idx
+	    copy_signed_binaries
+	else
+	    cp flashcmd.txt doflash.sh
+	fi
     else
-	cp flashcmd.txt doflash.sh
+	return 1
     fi
     if ! copy_bootloader_files bootloader_staging; then
 	return 1
     fi
     . ./boardvars.sh
-    if [ $EXTERNAL_ROOTFS_DRIVE -eq 1 ]; then
-	MACHINE=$MACHINE BOARDID=$BOARDID FAB=$FAB BOARDSKU=$BOARDSKU BOARDREV=$BOARDREV CHIPREV=$CHIPREV fuselevel=$fuselevel \
-	       "$here/$FLASH_HELPER" --external-device --no-flash --sign -u "$keyfile" -v "$sbk_keyfile" --user_key "$user_keyfile" \
-	       external-flash.xml.in $DTBFILE $EMMC_BCTS $ODMDATA $LNXFILE $ROOTFS_IMAGE
-	if [ $have_odmsign_func -eq 0 ]; then
-	    if [ -e signed/flash.xml.tmp ]; then
-		cp signed/flash.xml.tmp external-secureflash.xml
-		copy_signed_binaries
-	    else
-		cp flash.xml external-secureflash.xml
-	    fi
-	fi
-    fi
+    return 0
 }
 
 prepare_for_rcm_boot() {
     if [ $have_odmsign_func -eq 1 ]; then
-	"$here/rewrite-tegraflash-args" -o rcm-boot.sh --bins kernel=initrd-flash.img,kernel_dtb=kernel_$DTBFILE --cmd rcmboot --add="--securedev" doflash.sh
+	"$here/rewrite-tegraflash-args" -o rcm-boot.sh --bins kernel=initrd-flash.img,kernel_dtb=kernel_$DTBFILE --cmd rcmboot --add="--securedev" doflash.sh || return 1
 	# For t234: hack taken from odmsign.func
-	sed -i -e's,mb2_t234_with_mb2_bct_MB2,mb2_t234_with_mb2_cold_boot_bct_MB2,' rcm-boot.sh
+	sed -i -e's,mb2_t234_with_mb2_bct_MB2,mb2_t234_with_mb2_cold_boot_bct_MB2,' rcm-boot.sh || return 1
 	chmod +x rcm-boot.sh
     fi
 }
 
 run_rcm_boot() {
     if [ $have_odmsign_func -eq 1 ]; then
-	./rcm_boot.sh
+	if [ -z "$BR_CID" ]; then
+	    if ./rcm-boot.sh | tee rcm-boot.output; then
+		BR_CID=$(grep BR_CID: rcm-boot.output | cut -d: -f2)
+		return 0
+	    else
+		return 1
+	    fi
+	fi
+	./rcm-boot.sh
     else
 	MACHINE=$MACHINE BOARDID=$BOARDID FAB=$FAB BOARDSKU=$BOARDSKU BOARDREV=$BOARDREV CHIPREV=$CHIPREV fuselevel=$fuselevel \
 	       "$here/$FLASH_HELPER" --rcm-boot -u "$keyfile" -v "$sbk_keyfile" --user_key "$user_keyfile" \
@@ -213,6 +233,12 @@ wait_for_usb_storage() {
 		    echo "[$candidate]" >&2
 		    output="$candidate"
 		    break
+		elif [ "$name" != "flashpkg" -a "$cand_vendor" = "flashpkg" ]; then
+		    # This could happen if there was a failure on the device side
+		    echo "[got flashpkg when expecting $name]" >&2
+		    echo ""
+		    early_final_status=1
+		    return 1
 		fi
 	    fi
 	done
@@ -226,6 +252,7 @@ wait_for_usb_storage() {
 	fi
     done
     echo "$output"
+    return 0
 }
 
 copy_bootloader_files() {
@@ -271,7 +298,7 @@ copy_bootloader_files() {
 }
 
 generate_flash_package() {
-    local dev=$(wait_for_usb_storage "$session_id" "blpkg")
+    local dev=$(wait_for_usb_storage "$session_id" "flashpkg")
     local exports
 
     if [ -z "$dev" ]; then
@@ -285,23 +312,25 @@ generate_flash_package() {
 	echo "ERR: could not mount USB storage for writing flashing commands" >&2
 	return 1
     fi
+
     mkdir "$mnt/flashpkg/conf"
-    if [ $EXTERNAL_ROOTFS_DRIVE -eq 1 -a $BOOT_PARTITIONS_ON_EMMC -eq 1 ]; then
-	exports="export-devices mmcblk0 $ROOTFS_DEVICE;"
-    else
-	exports="export-devices $ROOTFS_DEVICE;"
-	[ $EXTERNAL_ROOTFS_DRIVE -eq 0 ] || exports="erase-mmc;${exports}"
-    fi
-    local command_sequence
+    rm -f "$mnt/flashpkg/conf/command_sequence"
+    touch "$mnt/flashpkg/conf/command_sequence"
     if [ $skip_bootloader -eq 0 ]; then
-	command_sequence="bootloader;${exports}reboot"
-    else
-	command_sequence="${exports}reboot"
+	echo "bootloader" >> "$mnt/flashpkg/conf/command_sequence"
+	mkdir "$mnt/flashpkg/bootloader"
+	cp bootloader_staging/* "$mnt/flashpkg/bootloader"
     fi
-    echo "$command_sequence" > "$mnt/flashpkg/conf/command_sequence"
-    echo "Flash command sequence: $command_sequence"
-    mkdir "$mnt/flashpkg/bootloader"
-    cp bootloader_staging/* "$mnt/flashpkg/bootloader"
+
+    if [ $EXTERNAL_ROOTFS_DRIVE -eq 1 -a $BOOT_PARTITIONS_ON_EMMC -eq 1 ]; then
+	echo "export-devices mmcblk0 $ROOTFS_DEVICE" >> "$mnt/flashpkg/conf/command_sequence"
+    else
+	[ $EXTERNAL_ROOTFS_DRIVE -eq 0 ] || echo "erase-mmc" >> "$mnt/flashpkg/conf/command_sequence"
+	echo "export-devices $ROOTFS_DEVICE" >> "$mnt/flashpkg/conf/command_sequence"
+    fi
+
+    echo "reboot" >> "$mnt/flashpkg/conf/command_sequence"
+
     unmount_and_release "$mnt" "$dev"
 }
 
@@ -311,7 +340,7 @@ write_to_device() {
     local dev=$(wait_for_usb_storage "$session_id" "$devname")
     local opts="$3"
     local rewritefiles="secureflash.xml"
-    local datased
+    local datased simgname
     if [ -z "$dev" ]; then
 	echo "ERR: could not find $devname" >&2
 	return 1
@@ -325,14 +354,20 @@ write_to_device() {
     else
 	datased="-e/DATAFILE/d"
     fi
-    sed -i -e"s,APPFILE_b,$ROOTFS_IMAGE," -e"s,APPFILE,$ROOTFS_IMAGE," $datased initrd-flash.xml
+    # XXX
+    # For the pre-signed case, the flash layout will contain the
+    # name of the sparseimage file, and we need to convert it back to
+    # the raw image name.
+    # XXX
+    simgname="${ROOTFS_IMAGE%.*}.img"
+    sed -i -e"s,$simgname,$ROOTFS_IMAGE," -e"s,APPFILE_b,$ROOTFS_IMAGE," -e"s,APPFILE,$ROOTFS_IMAGE," $datased initrd-flash.xml
     "$here/make-sdcard" -y $opts initrd-flash.xml "$dev"
     unmount_and_release "" "$dev"
 }
 
 get_final_status() {
     local dtstamp="$1"
-    local dev=$(wait_for_usb_storage "$session_id" "blpkg")
+    local dev=$(wait_for_usb_storage "$session_id" "flashpkg")
     local mnt final_status logdir logfile
     if [ -z "$dev" ]; then
 	echo "ERR: could not get final status from device" >&2
@@ -353,7 +388,7 @@ get_final_status() {
 	mkdir "$logdir"
 	for logfile in "$mnt"/flashpkg/logs/*; do
 	    [ -f "$logfile" ] || continue
-	    cp -v "$logfile" "$logdir/"
+	    cp "$logfile" "$logdir/"
 	done
     fi
     unmount_and_release "$mnt" "$dev"
@@ -363,12 +398,26 @@ get_final_status() {
 
 dtstamp=$(date +"%Y-%m-%d-%H.%M.%S")
 logfile="log.initrd-flash.$dtstamp"
+stepnumber=1
+
+step_banner() {
+    local msg="$1"
+    echo "== Step $stepnumber: $msg at $(date -Is) ==" | tee -a "$logfile"
+    stepnumber=$(expr $stepnumber \+ 1)
+}
+
 echo "Starting at $(date -Is)" | tee "$logfile"
 if ! wait_for_rcm 2>&1 | tee -a "$logfile"; then
     echo "ERR: Device not found at $(date -Is)" | tee -a "$logfile"
     exit 1
 fi
-echo "Step 1: Sign binaries"
+if [ -z "$usb_instance" -a -e ".found-jetson" ]; then
+    . .found-jetson
+fi
+if [ -n "$usb_instance" ]; then
+    instance_args="--usb-instance $usb_instance"
+fi
+step_banner "Signing binaries"
 rm -rf bootloader_staging
 mkdir bootloader_staging
 if ! sign_binaries 2>&1 >>"$logfile"; then
@@ -378,7 +427,11 @@ fi
 if [ -z "$PRESIGNED" ]; then
     [ ! -f ./boardvars.sh ] || . ./boardvars.sh
 fi
-echo "Step 2: Boot Jetson via RCM"
+step_banner "Boot Jetson via RCM"
+if ! prepare_for_rcm_boot 2>&1 >>"$logfile"; then
+    echo "ERR: Preparing RCM boot command failed at $(date -Is)" | tee -a "$logfile"
+    exit 1
+fi
 if ! wait_for_rcm 2>&1 | tee -a "$logfile"; then
     echo "ERR: Device not found at $(date -Is)" | tee -a "$logfile"
     exit 1
@@ -398,36 +451,48 @@ session_id=$("$here/brcid-to-uid" $BR_CID)
 session_id=$(echo -n "$session_id" | tail -c8)
 
 # Boot device flashing
-echo "Step 3: Send flash sequence commands"
+step_banner "Sending flash sequence commands"
 if ! generate_flash_package 2>&1 | tee -a "$logfile"; then
     echo "ERR: could not create command package at $(date -Is)" | tee -a "$logfile"
     exit 1
 fi
-echo "Step 4: format and write storage device(s)"
 if [ $EXTERNAL_ROOTFS_DRIVE -eq 1 ]; then
+    keep_going=1
     if [ $BOOT_PARTITIONS_ON_EMMC -eq 1 ]; then
-	echo "  -- writing boot partitions to internal storage device"
+	step_banner "Writing boot partitions to internal storage device"
 	if ! write_to_device mmcblk0 flash.xml.in --no-final-part 2>&1 | tee -a "$logfile"; then
 	    echo "ERR: write failure to internal storage at $(date -Is)" | tee -a "$logfile"
+	    if [ $early_final_status -eq 0 ]; then
+		exit 1
+	    fi
+	fi
+    fi
+    if [ $early_final_status -eq 0 ]; then
+	step_banner "Writing partitions on external storage device"
+	if ! write_to_device $ROOTFS_DEVICE external-flash.xml.in 2>&1 | tee -a "$logfile"; then
+	    echo "ERR: write failure to external storage at $(date -Is)" | tee -a "$logfile"
+	    if [ $early_final_status -eq 0 ]; then
+		exit 1
+	    fi
+	fi
+    fi
+else
+    step_banner "Writing partitions on internal storage device"
+    if ! write_to_device $ROOTFS_DEVICE flash.xml.in 2>&1 | tee -a "$logfile"; then
+	echo "ERR: write failure to internal storage at $(date -Is)" | tee -a "$logfile"
+	if [ $early_final_status -eq 0 ]; then
 	    exit 1
 	fi
     fi
-    echo "  -- writing partitions to external storage device"
-    if ! write_to_device $ROOTFS_DEVICE external-flash.xml.in 2>&1 | tee -a "$logfile"; then
-	echo "ERR: write failure to external storage at $(date -Is)" | tee -a "$logfile"
-	exit 1
-    fi
-else
-    echo " -- writing to internal storage device"
-    if ! write_to_device $ROOTFS_DEVICE flash.xml.in 2>&1 | tee -a "$logfile"; then
-	echo "ERR: write failure to internal storage at $(date -Is)" | tee -a "$logfile"
-	exit 1
-    fi
 fi
-echo "Step 5: Wait for final status from device (please be patient)"
+step_banner "Waiting for final status from device"
 if ! get_final_status "$dtstamp" 2>&1 | tee -a "$logfile"; then
     echo "ERR: failed to retrieve device status at $(date -Is)" | tee -a "$logfile"
+    echo "Host-side log:              $logfile"
+    echo "Device-side logs stored in: device-logs-$dtstamp"
     exit 1
 fi
 echo "Successfully finished at $(date -Is)" | tee -a "$logfile"
+echo "Host-side log:              $logfile"
+echo "Device-side logs stored in: device-logs-$dtstamp"
 exit 0
