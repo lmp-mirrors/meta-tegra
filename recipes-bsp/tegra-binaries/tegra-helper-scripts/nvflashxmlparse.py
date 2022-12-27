@@ -151,7 +151,13 @@ def extract_layout(infile, devtype, outf, new_devtype=None, sector_count=0):
     tree = ET.parse(infile)
     root = tree.getroot()
     for dev in root.findall('device'):
-        if dev.get('type') != devtype:
+        if devtype == "boot":
+            if dev.get('type') not in boot_devices:
+                root.remove(dev)
+        elif devtype == "rootfs":
+            if dev.get('type') in boot_devices:
+                root.remove(dev)
+        elif dev.get('type') != devtype:
             root.remove(dev)
     devs = root.findall('device')
     if len(devs) != 1:
@@ -228,13 +234,14 @@ def replace_filename(part, maptree):
             return
     logging.info("No rewrite applied for {}".format(part.get('name')))
 
-def rewrite_layout(infile, mapfile, outf):
+def rewrite_layout(infile, mapfiles, outf):
     intree = ET.parse(infile)
-    maptree = ET.parse(mapfile)
-    root = intree.getroot()
-    for dev in root.findall('device'):
-        for part in dev.findall('partition'):
-            replace_filename(part, maptree)
+    for mapfile in mapfiles:
+        maptree = ET.parse(mapfile)
+        root = intree.getroot()
+        for dev in root.findall('device'):
+            for part in dev.findall('partition'):
+                replace_filename(part, maptree)
     intree.write(outf, encoding='unicode', xml_declaration=True)
     outf.write("\n")
 
@@ -289,7 +296,7 @@ Extracts/manipulates partition information in an NVIDIA flash layout XML file
     cmdgroup.add_argument('-l', '--list-types', help='list the device types described in the file', action='store_true')
     cmdgroup.add_argument('-b', '--boot-device', help='print the device type holding boot partitions', action='store_true')
     cmdgroup.add_argument('-e', '--extract', help='generate a new XML file extracting just the specified device type', action='store_true')
-    cmdgroup.add_argument('--rewrite-contents-from', help='rewrite the <filename> entries in the output XML with the entries in the specified layout', action='store')
+    cmdgroup.add_argument('--rewrite-contents-from', help='rewrite the <filename> entries in the output XML with the entries in the specified layout(s)', action='store')
     cmdgroup.add_argument('-s', '--split', help='XML output file for MMC-SDcard/external split on Jetson AGX Xavier', action='store')
     cmdgroup.add_argument('--remove', help='Remove partitions from the XML layout', action='store_true')
     parser.add_argument('--change-device-type', help='(for use with --split or --extract) change the <device> tag type attribute to the specifed value', action='store')
@@ -312,7 +319,7 @@ Extracts/manipulates partition information in an NVIDIA flash layout XML file
             split_layout(args.filename, outf, sdcardf, args.change_device_type, size_to_sectors(args.sdcard_size))
             return 0
         if args.rewrite_contents_from:
-            rewrite_layout(args.filename, args.rewrite_contents_from, outf)
+            rewrite_layout(args.filename, args.rewrite_contents_from.split(','), outf)
             return 0
         if args.extract:
             extract_layout(args.filename, args.type, outf, args.change_device_type, size_to_sectors(args.sdcard_size))
@@ -353,9 +360,10 @@ Extracts/manipulates partition information in an NVIDIA flash layout XML file
                 devs['rootfs'] = layout.devtypes[0]
                 devs['boot'] = None if layout.device_count < 2 or layout.devtypes[1] not in boot_devices else layout.devtypes[1]
             args.type = devs[args.type]
-        if args.type not in layout.devices:
-            raise RuntimeError("Device type '{}' not present; available types: {}".format(args.type,
-                                                                                          ', '.join(list(layout.devices.keys()))))
+        if args.type is None or args.type not in layout.devices:
+            logging.info("Requested device type no present, nothing to do")
+            return 0
+
     if args.output:
         outf = open(args.output, "w")
     else:
