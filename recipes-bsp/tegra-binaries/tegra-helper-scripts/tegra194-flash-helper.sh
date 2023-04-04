@@ -319,9 +319,11 @@ case "$boardid" in
 esac
 
 ramcodeargs=
+misc_cfg="tegra194-mb1-bct-misc-flash.cfg"
 if [ "$boardid" = "2888" -a "$board_sku" = "0008" ]; then
     # AGX Xavier Industrial
     ramcodeargs="--ramcode 1"
+    misc_cfg="tegra194-mb1-bct-misc-flash-jaxi.cfg"
 fi
 
 for var in $FLASHVARS; do
@@ -396,6 +398,15 @@ if [ "$spi_only" = "yes" ]; then
 else
     cp "$flash_in" flash.xml.tmp
 fi
+
+# All t194 platforms now use lz4-compressed DTB files for BPMP
+bpfdtbfile_compressed="$(basename $BPFDTB_FILE .dtb)_lz4.dtb"
+if [ ! -e "$bpfdtbfile_compressed" ]; then
+    echo "ERR: cannot find lz4-compressed copy of $BPFDTB_FILE" >&2
+    exit 1
+fi
+BPFDTB_FILE="$bpfdtbfile_compressed"
+
 sed -e"s,VERFILE,${MACHINE}_bootblob_ver.txt," -e"s,BPFDTB_FILE,$BPFDTB_FILE," \
     -e"s,TBCDTB-FILE,$dtb_file," -e"s, DTB_FILE,$kernel_dtbfile," \
     $appfile_sed flash.xml.tmp > flash.xml
@@ -441,7 +452,7 @@ fi
 
 bctargs="$UPHY_CONFIG $MINRATCHET_CONFIG \
          --device_config $DEVICE_CONFIG \
-         --misc_config tegra194-mb1-bct-misc-flash.cfg \
+         --misc_config $misc_cfg \
          --misc_cold_boot_config $MISC_COLD_BOOT_CONFIG \
          --pinmux_config $PINMUX_CONFIG \
          --gpioint_config $GPIOINT_CONFIG \
