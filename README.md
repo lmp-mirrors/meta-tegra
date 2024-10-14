@@ -22,7 +22,7 @@ LAYERSERIES_COMPAT: styhead, walnascar
 CUDA toolchain compatibility note
 ---------------------------------
 
-CUDA 12.2 supports up through gcc 12 only, so recipes are included
+CUDA 12.6 supports up through gcc 13.2 only, so recipes are included
 for adding the gcc 10 toolchain to the build for CUDA use, and `cuda.bbclass`
 has been updated to pass the g++ 10 compiler to nvcc for CUDA code compilation.
 
